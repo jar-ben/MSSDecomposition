@@ -106,32 +106,7 @@ def parse(filename):
                     C.append(cl)
     return C,B
 
-def filterPivots(C, mcses, pivots):
-    filtered = []
-    maxVariable = 0
-    clauses = C + pivots
-    for clause in clauses:
-        maxVariable = max(maxVariable, max([abs(l) for l in clause]))
-
-    activators = [x + maxVariable + 1 for x in range(len(clauses))]
-    s = Solver(name = "g4")
-    for i in range(len(clauses)):
-        s.add_clause(clauses[i] + [activators[i]])
-
-    #at least one pivot hold
-    s.add_clause([-activators[i] for i in range(len(C), len(activators))])
-
-    for mcs in mcses:
-        assumptions = [-activators[i] for i in range(len(C)) if i not in mcs]
-        if not s.solve(assumptions):
-            filtered.append(mcs)
-
-    if len(pivots) > 0:
-        print("       filtered:", filtered, "all", mcses)
-
-    return filtered
-
-def rime(C, pivots):
+def rime(C):
     filename = "rime{}.cnf".format(randint(1,10000000))
     exportCNF(C, filename)
     cmd = "./rime -v 1 {}".format(filename)
@@ -149,70 +124,98 @@ def rime(C, pivots):
             mcs = [int(c) for c in line if int(c) < len(C)] #0-based indexing
             mcses.append(mcs)
     assert mssesCount == len(mcses)
-    return len(filterPivots(C, mcses, pivots))
+    return mcses
 
-def mcslsMCSes(soft, hard, pivots):
+def mcsls(C, hard, excluded):
+    s = Solver(name = "g4")
+    for i in range(len(C)):
+        if not i in excluded:
+            s.add_clause(C[i])
+    if s.solve():#the instance is satisfiable
+        return [[]]
+
+    H = []
+    S = []
+    for i in range(len(C)):
+        if i in excluded: continue
+        elif i in hard:
+            H.append(C[i])
+        else:
+            S.append(C[i])
+
     filename = "mcsls{}.wcnf".format(randint(1,10000000))
-    open(filename, "w").write(renderWcnf(hard, soft))
+    open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./mcsls {}".format(3600, filename)
     print(cmd)
     out = run(cmd, 3600)
     mcses = []
     for line in out.splitlines():
         if line[:7] == "c MCS: ":
-            mcs = [int(c) - (len(hard) + 1) for c in line[7:].rstrip().split(" ")] #0 based indexing
+            mcs = [int(c) - (len(H) + 1) for c in line[7:].rstrip().split(" ")] #0 based indexing
             mcses.append(mcs)
-    return len(filterPivots(soft + hard, mcses, pivots))
+    return mcses
 
 
-def processComponent(C, pivots = [], ttl = 1):
-    if ttl == 0: return rime(C, pivots) #end of recursion
+def processComponent(C, hard, excluded, ttl = 1):
+    if ttl == 0: return mcsls(C, hard, excluded)
 
     decomposer = Decomposer(C, [])
     arts = list(decomposer.articulationPoints())
     if len(arts) == 0: #there is no articulation point, hence, we end the recursion
-        return rime(C, pivots)
+        return mcsls(C, hard, excluded)
 
     #pick and use one articulation point
     art = arts[0] #we should sample instead of picking the first one
-    Ccopy = C[:art] + C[art + 1:]
-    print("C len: {}, Ccopy: {}".format(len(C), len(Ccopy)))
-    print("C MSSes:{}, Ccopy MSSes:{}".format(rime(C, []), rime(Ccopy, [])))
-
-    components = Decomposer(Ccopy, []).sccs()
-    #TODO: the number of components should be always bigger than 1
-    # assert len(components) > 1
-
+    components = Decomposer(C, []).sccs(excluded + [art])
     if len(components) == 1:
-        return rime(C, pivots) #the decomposition did not work
+        print("single component")
+        return mcsls(C, hard, excluded)
+
+    #Get MSSes when art is presented
+    artMSSes = processComponent(C, hard + [art], excluded, ttl - 1)
+    print("ttl: {}, artMSSes: {}".format(ttl, len(artMSSes)))
     
-    counts = []
-
-    hardArtCount = mcslsMCSes(Ccopy, [C[art]], pivots)#the number of MSSes that include the art clause
-    print("Ccopy + hard art MSSes:", hardArtCount)
-    pivots.append(C[art])
-
-    #the counts for the components without the art clause
+    #Get MSSes in the individual components
+    componentsMCSes = []
+    print(components)
     for component in components:
-        C,B = component
-        #if len(C) == 1: continue #there is only one clause in that component, i.e., the clause is an MSS
-        #s = Solver(name = "g4")
-        #for cl in C:
-        #    s.add_clause(cl)
-        #if s.solve(): continue #the whole component is satisfiable
+        soft,_ = component
+        excludedRec = list(set(excluded + [i for i in range(len(C)) if i not in soft] + [art]))
+        print("rec hard:{}, excluded: {}, soft: {}, C: {}".format(len(hard), len(excludedRec), len(soft), len(C)))
+        componentsMCSes.append(processComponent(C, hard, excludedRec, ttl - 1))
 
-        print("inner C:", len(C))
-        count = processComponent(C, pivots, ttl - 1)
-        print("inner count:", count)
-        #count = rime(C, pivots + [C[art]])
-        counts.append(count)
+    combinedMSSes = []
+    #TODO: instead of trying all combinations, apply the pivot function to trim the set
+    s = Solver(name = "g4")
+    maxVariable = 0
+    for clause in C:
+        maxVariable = max(maxVariable, max([abs(l) for l in clause]))
+    activators = [x + maxVariable + 1 for x in range(len(C))]
+    for i in range(len(C)):
+        if i in hard:
+            s.add_clause(C[i])
+        else:
+            s.add_clause(C[i] + [activators[i]])
+    s.add_clause([-activators[i] for i in (excluded + [art])]) #at least one of the excluded clauses is satisfied, i.e,. the "MSS" can be extended
 
-    msses = 1
-    for count in counts:
-        msses *= count
-    msses += hardArtCount
-    print(counts, msses)
-    return msses
+    print("hard:{}, excluded:{}, art: {}".format(len(hard), len(excluded), art))
+    ones = 0
+    for k in range(len(componentsMCSes)):
+        print("#MCS in the component:", len(componentsMCSes[k]))
+        for l in range(k + 1, len(componentsMCSes)):
+            for mcs1 in componentsMCSes[k]:
+                for mcs2 in componentsMCSes[l]:
+                    assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs1 + mcs2 + excluded)]
+                    if not s.solve(assumptions):
+                        combinedMSSes.append(mcs1 + mcs2)
+                        combined = mcs1 + mcs2
+                        for mcs in artMSSes:
+                            if len(set(mcs) - set(combined)) == 1:
+                                ones += 1
+                                break
+    print("ones:", ones)
+    print(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes))
+    return artMSSes + combinedMSSes
 
 
 def processFile(filename):
@@ -225,7 +228,8 @@ def processFile(filename):
     counts = []
     iteration = 1
     for component in components:
-        C,B = component
+        Cids,_ = component
+        C = [Call[i] for i in Cids]
 
         if len(C) == 1: continue #there is only one clause in that component, i.e., the clause is an MSS
         s = Solver(name = "g4")
@@ -234,10 +238,10 @@ def processFile(filename):
         if s.solve(): continue #the whole component is satisfiable
 
         nontrivialComponents += 1
-        if iteration == 5:
-            count = processComponent(C, [], 1)
+        if True or iteration == 5:
+            count = len(processComponent(C, [], [], 1))
         else:
-            count = processComponent(C, [], 0)
+            count = len(processComponent(C, [], [], 1))
         counts.append(count)
         #print("+++count", count, iteration)
         iteration += 1

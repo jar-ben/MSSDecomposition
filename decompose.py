@@ -47,11 +47,14 @@ class Decomposer:
                 for d in self.hitmapB[-l]: #clauses that contain the negated literal (no offset here!)
                     self.sccDFS(visitedC, visitedB, -1, d, component)
 
-    def sccs(self):
+    def sccs(self, art = []):
         visitedC = [False for _ in range(len(self.C))]
         visitedB = [False for _ in range(len(self.B))]
         self.sccC = [-1 for _ in range(len(self.C))]
         self.sccB = [-1 for _ in range(len(self.B))]
+
+        for i in art:
+            visitedC[i] = True
 
         component = 0
         for i in range(len(self.C)):
@@ -64,9 +67,10 @@ class Decomposer:
             self.sccDFS(visitedC, visitedB, -1, i, component)
         components = [[[],[]] for _ in range(component)]
         for i in range(len(self.C)):
-            components[self.sccC[i] - 1][0].append(self.C[i])
+            if i in art: continue
+            components[self.sccC[i] - 1][0].append(i)
         for i in range(len(self.B)):
-            components[self.sccB[i] - 1][1].append(self.B[i])
+            components[self.sccB[i] - 1][1].append(i)
        
         return components       
 
