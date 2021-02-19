@@ -12,6 +12,7 @@ import signal
 from decompose import Decomposer
 from pysat.card import *
 import glob
+import itertools
 
 from pysat.formula import CNF
 from pysat.solvers import Solver, Minisat22
@@ -106,8 +107,21 @@ def parse(filename):
                     C.append(cl)
     return C,B
 
+def getAutarky(C):
+    filename = "./tmp/autarky{}.cnf".format(randint(1,10000000))
+    exportCNF(C, filename)
+    cmd = "timeout 3600 python3 autarky.py {}".format(filename)
+    print(cmd)
+    out = run(cmd, 3600)
+    if "autarky vars" in out:
+        for line in out.splitlines():
+            line = line.rstrip()
+            if line[:2] == "v ":
+                return [int(c) - 1 for c in line.split()[1:]]
+    else: return [i for i in range(len(C))]
+
 def rime(C):
-    filename = "rime{}.cnf".format(randint(1,10000000))
+    filename = "./tmp/rime{}.cnf".format(randint(1,10000000))
     exportCNF(C, filename)
     cmd = "./rime -v 1 {}".format(filename)
     print(len(C), cmd)
@@ -136,14 +150,16 @@ def mcsls(C, hard, excluded):
 
     H = []
     S = []
+    mapa = []
     for i in range(len(C)):
         if i in excluded: continue
         elif i in hard:
             H.append(C[i])
         else:
+            mapa.append(i)
             S.append(C[i])
 
-    filename = "mcsls{}.wcnf".format(randint(1,10000000))
+    filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./mcsls {}".format(3600, filename)
     print(cmd)
@@ -151,40 +167,46 @@ def mcsls(C, hard, excluded):
     mcses = []
     for line in out.splitlines():
         if line[:7] == "c MCS: ":
-            mcs = [int(c) - (len(H) + 1) for c in line[7:].rstrip().split(" ")] #0 based indexing
-            mcses.append(mcs)
+            mcs = [int(c) for c in line[7:].rstrip().split(" ")] #0 based indexing
+            mcses.append(hard + [mapa[i - (1 + len(H))] for i in mcs])
     return mcses
 
-
 def processComponent(C, hard, excluded, ttl = 1):
+    print("hard: {}, excluded: {}, ttl: {}".format(len(hard), len(excluded), ttl))
     if ttl == 0: return mcsls(C, hard, excluded)
 
     decomposer = Decomposer(C, [])
-    arts = list(decomposer.articulationPoints())
+    arts = [art for art in list(decomposer.articulationPoints()) if art not in hard]
+    print("arts:", len(arts))
     if len(arts) == 0: #there is no articulation point, hence, we end the recursion
         return mcsls(C, hard, excluded)
 
     #pick and use one articulation point
-    art = arts[0] #we should sample instead of picking the first one
-    components = Decomposer(C, []).sccs(excluded + [art])
-    if len(components) == 1:
+    found = False
+    for art in arts:
+        components = Decomposer(C, []).sccs(excluded + [art])
+        if len(components) > 1:
+            found = True
+            break
+    if not found:
         print("single component")
         return mcsls(C, hard, excluded)
 
     #Get MSSes when art is presented
     artMSSes = processComponent(C, hard + [art], excluded, ttl - 1)
-    print("ttl: {}, artMSSes: {}".format(ttl, len(artMSSes)))
+    print("ttl: {}, art: {}, artMSSes: {}".format(ttl, art, len(artMSSes)))
     
     #Get MSSes in the individual components
     componentsMCSes = []
-    print(components)
+    Cid = 0
     for component in components:
+        Cid += 1
         soft,_ = component
+        exportCNF([C[i] for i in soft], "C{}.cnf".format(Cid))
         excludedRec = list(set(excluded + [i for i in range(len(C)) if i not in soft] + [art]))
-        print("rec hard:{}, excluded: {}, soft: {}, C: {}".format(len(hard), len(excludedRec), len(soft), len(C)))
-        componentsMCSes.append(processComponent(C, hard, excludedRec, ttl - 1))
+        componentsMCSes.append(processComponent(C, hard, excludedRec, min(0, ttl - 1)))
+        #print("Comp", componentsMCSes[-1])
 
-    combinedMSSes = []
     #TODO: instead of trying all combinations, apply the pivot function to trim the set
     s = Solver(name = "g4")
     maxVariable = 0
@@ -194,26 +216,24 @@ def processComponent(C, hard, excluded, ttl = 1):
     for i in range(len(C)):
         if i in hard:
             s.add_clause(C[i])
+        elif i == art:
+            s.add_clause(C[i])
         else:
             s.add_clause(C[i] + [activators[i]])
-    s.add_clause([-activators[i] for i in (excluded + [art])]) #at least one of the excluded clauses is satisfied, i.e,. the "MSS" can be extended
 
-    print("hard:{}, excluded:{}, art: {}".format(len(hard), len(excluded), art))
-    ones = 0
-    for k in range(len(componentsMCSes)):
-        print("#MCS in the component:", len(componentsMCSes[k]))
-        for l in range(k + 1, len(componentsMCSes)):
-            for mcs1 in componentsMCSes[k]:
-                for mcs2 in componentsMCSes[l]:
-                    assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs1 + mcs2 + excluded)]
-                    if not s.solve(assumptions):
-                        combinedMSSes.append(mcs1 + mcs2)
-                        combined = mcs1 + mcs2
-                        for mcs in artMSSes:
-                            if len(set(mcs) - set(combined)) == 1:
-                                ones += 1
-                                break
-    print("ones:", ones)
+    temp = list(itertools.product(*componentsMCSes))
+    allCombinations = []
+    for item in temp:
+        mcs = []
+        for comp in item:
+            mcs += comp
+        allCombinations.append(mcs)
+
+    combinedMSSes = []
+    for mcs in allCombinations:
+        assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
+        if not s.solve(assumptions):
+            combinedMSSes.append(mcs)
     print(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes))
     return artMSSes + combinedMSSes
 
@@ -236,12 +256,13 @@ def processFile(filename):
         for cl in C:
             s.add_clause(cl)
         if s.solve(): continue #the whole component is satisfiable
-
+        C = [C[i] for i in getAutarky(C)]
         nontrivialComponents += 1
-        if True or iteration == 5:
-            count = len(processComponent(C, [], [], 1))
+        if iteration == 1 or True:
+            exportCNF(C, "C.cnf")
+            count = len(processComponent(C, [], [], 10))
         else:
-            count = len(processComponent(C, [], [], 1))
+            count = len(processComponent(C, [], [], 0))
         counts.append(count)
         #print("+++count", count, iteration)
         iteration += 1
@@ -257,7 +278,22 @@ def processFile(filename):
 #for f in files:
 #    processFile(f)
 
-processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf")
-#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m4_marco_input_386_400_32_refined.cnf")
+#processFile("/home/xbendik/benchmarks/randBenchsLargeRefined/m6_marco_input_578_600_75_refined.cnf")
+
+#5 sec
+#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_57_100_42_refined.cnf")
+
+#2 sec
+#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_132_200_9_refined.cnf")
+
+#1 sec
+#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_159_200_51_refined.cnf")
+
+#4 sec
+processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_199_200_80_refined.cnf")
+
+
 #processFile("/home/xbendik/rime/examples/C210_FW_UT_8630_uniques.cnf")
+#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf")
+#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m4_marco_input_386_400_32_refined.cnf")
 #processFile("/home/xbendik/rime/examples/bf1355-228.cnf")
