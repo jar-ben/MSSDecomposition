@@ -111,7 +111,7 @@ def getAutarky(C):
     filename = "./tmp/autarky{}.cnf".format(randint(1,10000000))
     exportCNF(C, filename)
     cmd = "timeout 3600 python3 autarky.py {}".format(filename)
-    print(cmd)
+    #print(cmd)
     out = run(cmd, 3600)
     if "autarky vars" in out:
         for line in out.splitlines():
@@ -165,7 +165,7 @@ def mcsls(C, hard, excluded):
     filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./mcsls {}".format(3600, filename)
-    print(cmd)
+    #print(cmd)
     out = run(cmd, 3600)
     mcses = []
     for line in out.splitlines():
@@ -240,35 +240,40 @@ def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, compone
         assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
         if not s.solve(assumptions):
             combinedMSSes.append(mcs + [art]) #art is not part of the MSSes, hence, we need to add it to the MCSes
-    print("BBB", len(combinedMSSes), len(validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)))
+    #print("BBB", len(combinedMSSes), len(validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)))
     #return validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components)
     return combinedMSSes
 
+def pickArt(arts, C, excluded):
+    options = []
+    for art in arts:
+        options.append((art, Decomposer(C, []).sccs(excluded + [art])))
+
+    #sort primary by the number of components (given by the art) and secondary by the median size of the components
+    #primarily at least two components, and secondary sorty by the median siez of the components
+    sortedOptions = sorted(options, key = lambda components: min(20000,(10000 * len(components[1]))) + median([len(i[0]) for i in components[1]]), reverse = True)
+    #print("alabama")
+    #for o in sortedOptions:
+    #    print(len(o[1]), median([len(i[0]) for i in o[1]]))
+
+    return sortedOptions[0]
+
 def processComponent(C, hard, excluded, ttl = 1):
-    print("hard: {}, excluded: {}, ttl: {}".format(len(hard), len(excluded), ttl))
     if ttl == 0: return mcsls(C, hard, excluded)
 
     decomposer = Decomposer(C, [])
     arts = [art for art in list(decomposer.articulationPoints()) if art not in hard]
-    print("arts:", len(arts))
     if len(arts) == 0: #there is no articulation point, hence, we end the recursion
         return mcsls(C, hard, excluded)
 
-    #pick and use one articulation point
-    found = False
-    for art in arts:
-        components = Decomposer(C, []).sccs(excluded + [art])
-        if len(components) > 1:
-            found = True
-            break
-    if not found:
-        print("single component")
+    print("arts", len(arts))
+    art, components = pickArt(arts, C, excluded)
+    print("picked")
+    if len(components) == 1:
         return mcsls(C, hard, excluded)
 
     #Get MSSes when art is presented
     artMSSes = processComponent(C, hard + [art], excluded, ttl - 1)
-    print("QQQ", len(artMSSes), ttl)
-    print("ttl: {}, art: {}, artMSSes: {}".format(ttl, art, len(artMSSes)))
     
     #Get MSSes in the individual components
     componentsMCSes = []
@@ -285,21 +290,11 @@ def processComponent(C, hard, excluded, ttl = 1):
             #componentsMCSes.append([[]]) #the whole component is satisfiable, i.e., [] is the only MCS
         else:
             softs.append(soft)
-            print("soft", soft)
-            print("excluded", excludedRec)
-            componentsMCSes.append(processComponent(C, hard, excludedRec, min(40, ttl - 1)))
-            print("components MSSes:", len(componentsMCSes[-1]), "components:", len(componentsMCSes))
+            componentsMCSes.append(processComponent(C, hard, excludedRec, min(1, ttl - 1)))
 
 
     combinedMSSes = validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)
-    print(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes))
-
-    if len(artMSSes + combinedMSSes) < 50:
-        print("malina")
-        allMCSes = mcsls(C, hard, excluded)
-        print("art: {}\n artMSSes: {}\ncombinedMSSes: {}\n mcsls: {}\ncomponentsMCSes: {}".format(art,artMSSes, combinedMSSes, allMCSes, componentsMCSes))
-        assert len(allMCSes) == len(artMSSes + combinedMSSes)
-        
+    print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
 
     return artMSSes + combinedMSSes
 
@@ -313,6 +308,7 @@ def processFile(filename):
     nontrivialComponents = 0
     counts = []
     iteration = 1
+    print("components:", len(components))
     for component in components:
         Cids,_ = component
         C = [Call[i] for i in Cids]
@@ -328,7 +324,7 @@ def processFile(filename):
         nontrivialComponents += 1
         if iteration == 1 or True:
             exportCNF(C, "C.cnf")
-            count = len(processComponent(C, [], [], 150))
+            count = len(processComponent(C, [], [], 200))
         else:
             count = len(processComponent(C, [], [], 0))
         counts.append(count)
@@ -359,7 +355,10 @@ def tests():
 
 #processFile("/home/xbendik/benchmarks/randBenchsLargeRefined/m6_marco_input_578_600_75_refined.cnf")
 
-tests()
+#tests()
+prefix = "/home/xbendik/benchmarks/randBenchsSmallRefined/"
+
+processFile(prefix + "m4_marco_input_324_400_76_refined.cnf")
 
 #processFile("/home/xbendik/rime/examples/C210_FW_UT_8630_uniques.cnf")
 #processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf")
