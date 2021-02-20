@@ -360,7 +360,10 @@ prefix = "/home/xbendik/benchmarks/randBenchsSmallRefined/"
 
 processFile(prefix + "m4_marco_input_324_400_76_refined.cnf")
 
-#processFile("/home/xbendik/rime/examples/C210_FW_UT_8630_uniques.cnf")
-#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf")
-#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m4_marco_input_386_400_32_refined.cnf")
-#processFile("/home/xbendik/rime/examples/bf1355-228.cnf")
+import sys
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser("MSS counter")
+    parser.add_argument("input_file", help = "A path to the input file. Either a .cnf or a .gcnf instance. See ./examples/")
+    args = parser.parse_args()
+
+    processFile(args.input_file)
