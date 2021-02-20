@@ -140,12 +140,15 @@ def rime(C):
     assert mssesCount == len(mcses)
     return mcses
 
-def mcsls(C, hard, excluded):
+def checkSAT(C, excluded):
     s = Solver(name = "g4")
     for i in range(len(C)):
         if not i in excluded:
             s.add_clause(C[i])
-    if s.solve():#the instance is satisfiable
+    return s.solve()
+
+def mcsls(C, hard, excluded):
+    if checkSAT(C, excluded):
         return [[]]
 
     H = []
@@ -168,8 +171,78 @@ def mcsls(C, hard, excluded):
     for line in out.splitlines():
         if line[:7] == "c MCS: ":
             mcs = [int(c) for c in line[7:].rstrip().split(" ")] #0 based indexing
-            mcses.append(hard + [mapa[i - (1 + len(H))] for i in mcs])
+            mcses.append([mapa[i - (1 + len(H))] for i in mcs])
+
     return mcses
+
+#return MSSes that are not subsets of artMSSes
+def validCombinations2(C, hard, excluded, artMCSes, art, componentsMCSes, components, softs):
+    s = Solver(name = "g4")
+    cls = []
+    for mcs in artMCSes:
+        s.add_clause([-(x + 1) for x in mcs])
+        cls.append([-(x + 1) for x in mcs])
+        assert set(mcs) - set(hard) == set(mcs)
+    witnessed = []
+    nonWitnessed = []
+
+    for cid in range(len(componentsMCSes)):
+        component = componentsMCSes[cid]
+        soft = softs[cid]
+        coSoft = [i for i in range(len(C)) if i not in soft]
+        w, n = [], []
+        for mcs in component:
+            if s.solve([i + 1 for i in (mcs + coSoft)]): 
+                w.append(mcs) #the correcponding MSS is not a subset of any of artMSSes, i.e, a unexplored MSS seed
+            else:
+                n.append(mcs)
+            if len(cls) < 5:
+                print("PPP", cls, [i + 1 for i in mcs])
+        witnessed.append(w)
+        nonWitnessed.append(n)
+        print("NW", len(n), len(w))
+    assert len(componentsMCSes) == len(witnessed) == len(nonWitnessed)
+
+
+    combinedMSSes = []
+    for i in range(len(componentsMCSes)):
+        validCombinationsList = [witnessed[i]]
+        validCombinationsList += [nonWitnessed[j] for j in range(i)]
+        validCombinationsList += [componentsMCSes[j] for j in range(i + 1, len(componentsMCSes))]
+        combinedMSSes += [list(item) for item in itertools.product(*validCombinationsList)]
+    return combinedMSSes
+        
+
+def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs):
+    s = Solver(name = "g4")
+    maxVariable = 0
+    for clause in C:
+        maxVariable = max(maxVariable, max([abs(l) for l in clause]))
+    activators = [x + maxVariable + 1 for x in range(len(C))]
+    for i in range(len(C)):
+        if i in hard:
+            s.add_clause(C[i])
+        elif i == art:
+            s.add_clause(C[i])
+        else:
+            s.add_clause(C[i] + [activators[i]])
+
+    temp = list(itertools.product(*componentsMCSes))
+    allCombinations = []
+    for item in temp:
+        mcs = []
+        for comp in item:
+            mcs += comp
+        allCombinations.append(list(set(mcs)))
+
+    combinedMSSes = []
+    for mcs in allCombinations:
+        assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
+        if not s.solve(assumptions):
+            combinedMSSes.append(mcs + [art]) #art is not part of the MSSes, hence, we need to add it to the MCSes
+    print("BBB", len(combinedMSSes), len(validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)))
+    #return validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components)
+    return combinedMSSes
 
 def processComponent(C, hard, excluded, ttl = 1):
     print("hard: {}, excluded: {}, ttl: {}".format(len(hard), len(excluded), ttl))
@@ -194,47 +267,40 @@ def processComponent(C, hard, excluded, ttl = 1):
 
     #Get MSSes when art is presented
     artMSSes = processComponent(C, hard + [art], excluded, ttl - 1)
+    print("QQQ", len(artMSSes), ttl)
     print("ttl: {}, art: {}, artMSSes: {}".format(ttl, art, len(artMSSes)))
     
     #Get MSSes in the individual components
     componentsMCSes = []
     Cid = 0
+    softs = []
     for component in components:
         Cid += 1
         soft,_ = component
-        exportCNF([C[i] for i in soft], "C{}.cnf".format(Cid))
         excludedRec = list(set(excluded + [i for i in range(len(C)) if i not in soft] + [art]))
-        componentsMCSes.append(processComponent(C, hard, excludedRec, min(0, ttl - 1)))
-        #print("Comp", componentsMCSes[-1])
 
-    #TODO: instead of trying all combinations, apply the pivot function to trim the set
-    s = Solver(name = "g4")
-    maxVariable = 0
-    for clause in C:
-        maxVariable = max(maxVariable, max([abs(l) for l in clause]))
-    activators = [x + maxVariable + 1 for x in range(len(C))]
-    for i in range(len(C)):
-        if i in hard:
-            s.add_clause(C[i])
-        elif i == art:
-            s.add_clause(C[i])
+        #check for satisfiability
+        if checkSAT(C, excludedRec):
+            pass
+            #componentsMCSes.append([[]]) #the whole component is satisfiable, i.e., [] is the only MCS
         else:
-            s.add_clause(C[i] + [activators[i]])
+            softs.append(soft)
+            print("soft", soft)
+            print("excluded", excludedRec)
+            componentsMCSes.append(processComponent(C, hard, excludedRec, min(40, ttl - 1)))
+            print("components MSSes:", len(componentsMCSes[-1]), "components:", len(componentsMCSes))
 
-    temp = list(itertools.product(*componentsMCSes))
-    allCombinations = []
-    for item in temp:
-        mcs = []
-        for comp in item:
-            mcs += comp
-        allCombinations.append(mcs)
 
-    combinedMSSes = []
-    for mcs in allCombinations:
-        assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
-        if not s.solve(assumptions):
-            combinedMSSes.append(mcs)
+    combinedMSSes = validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)
     print(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes))
+
+    if len(artMSSes + combinedMSSes) < 50:
+        print("malina")
+        allMCSes = mcsls(C, hard, excluded)
+        print("art: {}\n artMSSes: {}\ncombinedMSSes: {}\n mcsls: {}\ncomponentsMCSes: {}".format(art,artMSSes, combinedMSSes, allMCSes, componentsMCSes))
+        assert len(allMCSes) == len(artMSSes + combinedMSSes)
+        
+
     return artMSSes + combinedMSSes
 
 
@@ -256,11 +322,13 @@ def processFile(filename):
         for cl in C:
             s.add_clause(cl)
         if s.solve(): continue #the whole component is satisfiable
-        C = [C[i] for i in getAutarky(C)]
+        print("component size:", len(C))
+        C = [C[i] for i in getAutarky(C)] #autarky trim
+        print("autarky size:", len(C))
         nontrivialComponents += 1
         if iteration == 1 or True:
             exportCNF(C, "C.cnf")
-            count = len(processComponent(C, [], [], 10))
+            count = len(processComponent(C, [], [], 150))
         else:
             count = len(processComponent(C, [], [], 0))
         counts.append(count)
@@ -271,7 +339,18 @@ def processFile(filename):
     for count in counts:
         msses *= count
     print(filename, "nontrivial Components:", nontrivialComponents, "msses:", msses, "counts:", counts)
+    return msses
 
+def tests():
+    files = {
+            "/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_57_100_42_refined.cnf": 40320, #5 sec
+            "/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_132_200_9_refined.cnf": 109944, #2 sec
+            "/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_159_200_51_refined.cnf": 32256, #1 sec
+            "/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_199_200_80_refined.cnf": 2304, #0.4 sec
+            "/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf": 414720 #0.6 sec
+            }
+    for test in files:
+        assert files[test] == processFile(test)
 
 #files = glob.glob("/home/xbendik/benchmarks/randBenchsSmallRefined/*.cnf")
 #print("files:", len(files))
@@ -280,18 +359,7 @@ def processFile(filename):
 
 #processFile("/home/xbendik/benchmarks/randBenchsLargeRefined/m6_marco_input_578_600_75_refined.cnf")
 
-#5 sec
-#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_57_100_42_refined.cnf")
-
-#2 sec
-#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_132_200_9_refined.cnf")
-
-#1 sec
-#processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_159_200_51_refined.cnf")
-
-#4 sec
-processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_199_200_80_refined.cnf")
-
+tests()
 
 #processFile("/home/xbendik/rime/examples/C210_FW_UT_8630_uniques.cnf")
 #processFile("/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf")
