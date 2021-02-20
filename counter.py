@@ -356,9 +356,6 @@ def tests():
 #processFile("/home/xbendik/benchmarks/randBenchsLargeRefined/m6_marco_input_578_600_75_refined.cnf")
 
 #tests()
-prefix = "/home/xbendik/benchmarks/randBenchsSmallRefined/"
-
-processFile(prefix + "m4_marco_input_324_400_76_refined.cnf")
 
 import sys
 if __name__ == "__main__":
