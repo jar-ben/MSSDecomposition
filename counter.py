@@ -162,6 +162,9 @@ def mcsls(C, hard, excluded):
             mapa.append(i)
             S.append(C[i])
 
+    if len(S) == 0:
+        return []
+
     filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./mcsls {}".format(3600, filename)
@@ -213,7 +216,7 @@ def validCombinations2(C, hard, excluded, artMCSes, art, componentsMCSes, compon
     return combinedMSSes
         
 
-def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs):
+def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components):
     s = Solver(name = "g4")
     maxVariable = 0
     for clause in C:
@@ -240,8 +243,6 @@ def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, compone
         assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
         if not s.solve(assumptions):
             combinedMSSes.append(mcs + [art]) #art is not part of the MSSes, hence, we need to add it to the MCSes
-    #print("BBB", len(combinedMSSes), len(validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)))
-    #return validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components)
     return combinedMSSes
 
 def pickArt(arts, C, excluded):
@@ -266,9 +267,7 @@ def processComponent(C, hard, excluded, ttl = 1):
     if len(arts) == 0: #there is no articulation point, hence, we end the recursion
         return mcsls(C, hard, excluded)
 
-    print("arts", len(arts))
     art, components = pickArt(arts, C, excluded)
-    print("picked")
     if len(components) == 1:
         return mcsls(C, hard, excluded)
 
@@ -284,16 +283,14 @@ def processComponent(C, hard, excluded, ttl = 1):
         soft,_ = component
         excludedRec = list(set(excluded + [i for i in range(len(C)) if i not in soft] + [art]))
 
-        #check for satisfiability
-        if checkSAT(C, excludedRec):
-            pass
-            #componentsMCSes.append([[]]) #the whole component is satisfiable, i.e., [] is the only MCS
-        else:
+        #only unsatisfiable components participate on the MCSes
+        if not checkSAT(C, excludedRec):
             softs.append(soft)
             componentsMCSes.append(processComponent(C, hard, excludedRec, min(1, ttl - 1)))
 
 
-    combinedMSSes = validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)
+    combinedMSSes = validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components)
+    combinedMSSes2 = validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)
     print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
 
     return artMSSes + combinedMSSes
@@ -363,4 +360,7 @@ if __name__ == "__main__":
     parser.add_argument("input_file", help = "A path to the input file. Either a .cnf or a .gcnf instance. See ./examples/")
     args = parser.parse_args()
 
-    processFile(args.input_file)
+    if args.input_file == "tests":
+        tests()
+    else:
+        processFile(args.input_file)
