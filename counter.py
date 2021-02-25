@@ -14,6 +14,7 @@ from pysat.card import *
 import glob
 import itertools
 
+sys.path.insert(0, "/home/xbendik/bin/pysat")
 from pysat.formula import CNF
 from pysat.solvers import Solver, Minisat22
 
@@ -113,6 +114,7 @@ def getAutarky(C):
     cmd = "timeout 3600 python3 autarky.py {}".format(filename)
     #print(cmd)
     out = run(cmd, 3600)
+    os.remove(filename)
     if "autarky vars" in out:
         for line in out.splitlines():
             line = line.rstrip()
@@ -126,6 +128,7 @@ def rime(C):
     cmd = "./rime -v 1 {}".format(filename)
     print(len(C), cmd)
     out = run(cmd, 3600)
+    os.remove(filename)
     assert "Number of MSSes" in out
     out = out.splitlines()
     assert "Number of MSSes" in out[-1]
@@ -146,6 +149,11 @@ def checkSAT(C, excluded):
         if not i in excluded:
             s.add_clause(C[i])
     return s.solve()
+
+def printMCSes(mcses):
+    return
+    for mcs in mcses:
+        print("MCS~", mcs)
 
 def mcsls(C, hard, excluded):
     if checkSAT(C, excluded):
@@ -170,6 +178,7 @@ def mcsls(C, hard, excluded):
     cmd = "timeout {} ./mcsls {}".format(3600, filename)
     #print(cmd)
     out = run(cmd, 3600)
+    os.remove(filename)
     mcses = []
     for line in out.splitlines():
         if line[:7] == "c MCS: ":
@@ -178,44 +187,31 @@ def mcsls(C, hard, excluded):
 
     return mcses
 
+def projection(source, target):
+    return [i for i in source if i in target]
+
+
+
 #return MSSes that are not subsets of artMSSes
-def validCombinations2(C, hard, excluded, artMCSes, art, componentsMCSes, components, softs):
+def validCombinations2(C, hard, excluded, artMCSes, art, componentsMCSes, components, softs, wholeSofts):    
     s = Solver(name = "g4")
-    cls = []
     for mcs in artMCSes:
-        s.add_clause([-(x + 1) for x in mcs])
-        cls.append([-(x + 1) for x in mcs])
-        assert set(mcs) - set(hard) == set(mcs)
-    witnessed = []
-    nonWitnessed = []
+        s.add_clause([i + 1 for i in mcs]) #standard MSS map blocking clause
 
-    for cid in range(len(componentsMCSes)):
-        component = componentsMCSes[cid]
-        soft = softs[cid]
-        coSoft = [i for i in range(len(C)) if i not in soft]
-        w, n = [], []
-        for mcs in component:
-            if s.solve([i + 1 for i in (mcs + coSoft)]): 
-                w.append(mcs) #the correcponding MSS is not a subset of any of artMSSes, i.e, a unexplored MSS seed
-            else:
-                n.append(mcs)
-            if len(cls) < 5:
-                print("PPP", cls, [i + 1 for i in mcs])
-        witnessed.append(w)
-        nonWitnessed.append(n)
-        print("NW", len(n), len(w))
-    assert len(componentsMCSes) == len(witnessed) == len(nonWitnessed)
-
+    def isValid(mcs):
+        assumptions = [i + 1 if i not in mcs else -(i + 1) for i in range(len(C)) if i not in excluded]
+        return s.solve(assumptions)
 
     combinedMSSes = []
-    for i in range(len(componentsMCSes)):
-        validCombinationsList = [witnessed[i]]
-        validCombinationsList += [nonWitnessed[j] for j in range(i)]
-        validCombinationsList += [componentsMCSes[j] for j in range(i + 1, len(componentsMCSes))]
-        combinedMSSes += [list(item) for item in itertools.product(*validCombinationsList)]
+    for item in itertools.product(*componentsMCSes):
+        mcs = []
+        for comp in item:
+            mcs += comp
+        if isValid(mcs):
+            combinedMSSes.append(mcs + [art])
     return combinedMSSes
-        
 
+        
 def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components):
     s = Solver(name = "g4")
     maxVariable = 0
@@ -238,11 +234,13 @@ def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, compone
             mcs += comp
         allCombinations.append(list(set(mcs)))
 
+    print("all combs:", len(allCombinations))
     combinedMSSes = []
     for mcs in allCombinations:
         assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
         if not s.solve(assumptions):
             combinedMSSes.append(mcs + [art]) #art is not part of the MSSes, hence, we need to add it to the MCSes
+
     return combinedMSSes
 
 def pickArt(arts, C, excluded):
@@ -259,39 +257,65 @@ def pickArt(arts, C, excluded):
 
     return sortedOptions[0]
 
-def processComponent(C, hard, excluded, ttl = 1):
-    if ttl == 0: return mcsls(C, hard, excluded)
+def processComponent(C, hard, excluded, ttl = 1, mainInstance = True):
+    if ttl == 0: 
+        mcses = mcsls(C, hard, excluded)
+        if mainInstance:
+            printMCSes(mcses)
+        return mcses
 
     decomposer = Decomposer(C, [])
     arts = [art for art in list(decomposer.articulationPoints()) if art not in hard]
     if len(arts) == 0: #there is no articulation point, hence, we end the recursion
-        return mcsls(C, hard, excluded)
+        mcses = mcsls(C, hard, excluded)
+        if mainInstance:
+            printMCSes(mcses)
+        return mcses
 
     art, components = pickArt(arts, C, excluded)
     if len(components) == 1:
-        return mcsls(C, hard, excluded)
+        mcses = mcsls(C, hard, excluded)
+        if mainInstance:
+            printMCSes(mcses)
+        return mcses
 
     #Get MSSes when art is presented
     artMSSes = processComponent(C, hard + [art], excluded, ttl - 1)
     
+
     #Get MSSes in the individual components
     componentsMCSes = []
     Cid = 0
     softs = []
+    wholeSofts = []
     for component in components:
         Cid += 1
         soft,_ = component
-        excludedRec = list(set(excluded + [i for i in range(len(C)) if i not in soft] + [art]))
+        assert art not in soft
+        excludedRec = [i for i in range(len(C)) if i not in soft]
 
         #only unsatisfiable components participate on the MCSes
         if not checkSAT(C, excludedRec):
-            softs.append(soft)
-            componentsMCSes.append(processComponent(C, hard, excludedRec, min(1, ttl - 1)))
+            softs.append(soft[:])
+            componentsMCSes.append(processComponent(C, hard, excludedRec, ttl = min(0, ttl - 1), mainInstance = False))
+        else:
+            wholeSofts.append(soft)
 
+    #assertion
+    softsUnion = []
+    for s in softs + wholeSofts:
+        softsUnion += s
+    assert set(softsUnion + [art]) == set([i for i in range(len(C))]) - set(excluded)
 
-    combinedMSSes = validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, components)
-    combinedMSSes2 = validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs)
+    #the first one is based on checking the combininations extended with art for satisfiable, 
+    #the second one checks the combined MSSes for subset inclusion againts the art MSSes
+    #combinedMSSes = validCombinations3(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs, wholeSofts)
+    combinedMSSes = validCombinations2(C, hard, excluded, artMSSes, art, componentsMCSes, components, softs, wholeSofts)
+    
     print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
+
+    if mainInstance:
+        printMCSes(combinedMSSes)
 
     return artMSSes + combinedMSSes
 
@@ -320,7 +344,7 @@ def processFile(filename):
         print("autarky size:", len(C))
         nontrivialComponents += 1
         if iteration == 1 or True:
-            exportCNF(C, "C.cnf")
+            #exportCNF(C, "C.cnf")
             count = len(processComponent(C, [], [], 200))
         else:
             count = len(processComponent(C, [], [], 0))
@@ -343,7 +367,9 @@ def tests():
             "/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf": 414720 #0.6 sec
             }
     for test in files:
+        startTime = time.time()
         assert files[test] == processFile(test)
+        print("duration", time.time() - startTime)
 
 #files = glob.glob("/home/xbendik/benchmarks/randBenchsSmallRefined/*.cnf")
 #print("files:", len(files))
