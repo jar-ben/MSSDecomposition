@@ -9,7 +9,7 @@ import argparse
 import os
 from functools import partial
 import signal
-from decompose import Decomposer
+from decomposeIter import Decomposer
 from pysat.card import *
 import glob
 import itertools
@@ -176,7 +176,7 @@ def mcsls(C, hard, excluded):
     filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./mcsls {}".format(3600, filename)
-    #print(cmd)
+    print(cmd)
     out = run(cmd, 3600)
     os.remove(filename)
     mcses = []
@@ -252,8 +252,8 @@ def pickArt(arts, C, excluded):
     #primarily at least two components, and secondary sorty by the median siez of the components
     sortedOptions = sorted(options, key = lambda components: min(20000,(10000 * len(components[1]))) + median([len(i[0]) for i in components[1]]), reverse = True)
     #print("alabama")
-    #for o in sortedOptions:
-    #    print(len(o[1]), median([len(i[0]) for i in o[1]]))
+    for o in sortedOptions:
+        print(len(o[1]), median([len(i[0]) for i in o[1]]))
 
     return sortedOptions[0]
 
@@ -265,7 +265,8 @@ def processComponent(C, hard, excluded, ttl = 1, mainInstance = True):
         return mcses
 
     decomposer = Decomposer(C, [])
-    arts = [art for art in list(decomposer.articulationPoints()) if art not in hard]
+    arts = [art for art in decomposer.articulationPointsIter() if art not in hard]
+    print("arts:", len(arts))
     if len(arts) == 0: #there is no articulation point, hence, we end the recursion
         mcses = mcsls(C, hard, excluded)
         if mainInstance:
@@ -330,6 +331,7 @@ def processFile(filename):
     counts = []
     iteration = 1
     print("components:", len(components))
+    print("components sizes: ", " ".join([str(len(c[0])) for c in components]))
     for component in components:
         Cids,_ = component
         C = [Call[i] for i in Cids]
