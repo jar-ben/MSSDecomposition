@@ -176,7 +176,7 @@ def mcsls(C, hard, excluded):
     filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./mcsls {}".format(3600, filename)
-    print(cmd)
+    #print(cmd)
     out = run(cmd, 3600)
     os.remove(filename)
     mcses = []
@@ -234,7 +234,7 @@ def validCombinations(C, hard, excluded, artMSSes, art, componentsMCSes, compone
             mcs += comp
         allCombinations.append(list(set(mcs)))
 
-    print("all combs:", len(allCombinations))
+    #print("all combs:", len(allCombinations))
     combinedMSSes = []
     for mcs in allCombinations:
         assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
@@ -252,8 +252,8 @@ def pickArt(arts, C, excluded):
     #primarily at least two components, and secondary sorty by the median siez of the components
     sortedOptions = sorted(options, key = lambda components: min(20000,(10000 * len(components[1]))) + median([len(i[0]) for i in components[1]]), reverse = True)
     #print("alabama")
-    for o in sortedOptions:
-        print(len(o[1]), median([len(i[0]) for i in o[1]]))
+    #for o in sortedOptions:
+    #    print(len(o[1]), median([len(i[0]) for i in o[1]]))
 
     return sortedOptions[0]
 
@@ -266,7 +266,7 @@ def processComponent(C, hard, excluded, ttl = 1, mainInstance = True):
 
     decomposer = Decomposer(C, [])
     arts = [art for art in decomposer.articulationPointsIter() if art not in hard]
-    print("arts:", len(arts))
+    #print("arts:", len(arts))
     if len(arts) == 0: #there is no articulation point, hence, we end the recursion
         mcses = mcsls(C, hard, excluded)
         if mainInstance:
@@ -362,11 +362,10 @@ def processFile(filename):
 
 def tests():
     files = {
-            "/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_57_100_42_refined.cnf": 40320, #5 sec
-            "/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_132_200_9_refined.cnf": 109944, #2 sec
-            "/home/xbendik/benchmarks/randBenchsSmallRefined/m2_marco_input_159_200_51_refined.cnf": 32256, #1 sec
-            "/home/xbendik/benchmarks/randBenchsSmallRefined/m1_marco_input_199_200_80_refined.cnf": 2304, #0.4 sec
-            "/home/xbendik/benchmarks/randBenchsSmallRefined/m3_marco_input_384_400_2_refined.cnf": 414720 #0.6 sec
+            "./tests/m1_marco_input_57_100_42_refined.cnf": 40320, #5 sec
+            "./tests/m2_marco_input_132_200_9_refined.cnf": 109944, #2 sec
+            "./tests/m2_marco_input_159_200_51_refined.cnf": 32256, #1 sec
+            "./tests/m1_marco_input_199_200_80_refined.cnf": 2304, #0.4 sec
             }
     for test in files:
         startTime = time.time()

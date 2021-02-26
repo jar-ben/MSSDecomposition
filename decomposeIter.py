@@ -104,7 +104,6 @@ class Decomposer:
         return components       
 
     def articulationPointsIter(self):
-        print("computing arts")
         assert len(self.B) == 0
         with open("graph.g", "w") as f:
             f.write(str(len(self.C)) + "\n")
@@ -117,7 +116,6 @@ class Decomposer:
         cmd = "./ap"
         out = run(cmd, 3600)
         lines = out.splitlines()
-        print("arts computed")
         if lines:
             return [int(a) for a in lines[0].rstrip().split()]
         else:
