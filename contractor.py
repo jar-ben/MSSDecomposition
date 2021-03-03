@@ -85,7 +85,7 @@ class Contractor:
         assert len(self.B) == 0
         filename = "./tmp/disjoint_" + str(randint(1,10000000)) + ".cnf"
         exportCNF(self.C, filename)
-        cmd = "timeout 60 ./unimus_disjoint -a marco {}".format(filename)
+        cmd = "timeout 300 ./unimus_disjoint -a marco {}".format(filename)
         print(cmd)
         out = run(cmd, 60)
         if not "disjoint pair" in out:
@@ -105,31 +105,18 @@ class Contractor:
                 reading = True
         return m1, m2
 
-    def contractEdge(self, edge):
-        if "m1" in edge and "m2" in edge: return #these are the main vertices
-        if "m1" == edge[1] or "m2" == edge[1]:
-            edge = (edge[1], edge[0]) #the first vertex is kept, i.e., we always preserve the two main vertices
+    def maxNode(self):
+        maximum = 0
+        for node in self.nxG.nodes:
+            if "in" in node:
+                maximum = max(maximum, int(node[:-2]))
+            if "out" in node:
+                maximum = max(maximum, int(node[:-3]))
+        return maximum
 
-        # merge v2 into v1 and remove v2 from graph
-        v1l = self.g[edge[0]]
-        v1l.extend(self.g[edge[1]])
-        del self.g[edge[1]]
-
-        #replace all occurnces of v2 value with v1
-        for k in self.g:
-            self.g[k] = [edge[0] if x == edge[1] else x for x in self.g[k]]
-
-        # Remove all edges of v1 to itself(loops)
-        self.g[edge[0]] = [x for x in self.g[edge[0]] if x != edge[0]]
-
-    # Gets a random edge available in the current graph
-    def getRandomEdge(self):        
-        v2 = list(set(self.g.keys()) - set(["m1", "m2"])) [random.randint(0,len(self.g)-1)]        
-        v1 = self.g[v2] [random.randint(0,len(self.g[v2])-1)]
-        return (v1,v2) 
-    
     def buildNXGraph(self):
         m1, m2 = self.disjointMUSes()
+        self.m1, self.m2 = m1, m2
         if min(len(m1), len(m2)) == 0:
             print("failed to find disjoint MUSes")
             return None
@@ -145,7 +132,7 @@ class Contractor:
                 for nei in self.hitmapC[-l]:
                     if nei - 1 in m2: continue
                     self.nxG.add_edge("m2", str(nei) + "in", capacity=2)
-        for i in range(len(C)):
+        for i in range(len(self.C)):
             if i in m1 + m2: continue
             edges = False
             for l in self.C[i]:
@@ -158,57 +145,47 @@ class Contractor:
                     else:
                         self.nxG.add_edge(str(i + 1) + "out", str(nei) + "in", capacity=2)
             if edges:
-                self.nxG.add_edge(str(i + i) + "in", str(i + 1) + "out", capacity=1)
+                self.nxG.add_edge(str(i + 1) + "in", str(i + 1) + "out", capacity=1)
         print("nodes: {}, edges: {}".format(len(self.nxG.nodes), len(self.nxG.edges)))
         return True
 
-    def buildGraph(self):
-        m1, m2 = self.disjointMUSes()
-        if min(len(m1), len(m2)) == 0:
-            print("failed to find disjoint MUSes")
-            return None
-        print("m1 size: {}, m2 size: {}".format(len(m1), len(m2)))
-        self.g = {}
-        self.g["m1"] = [] #M1 vertex
-        self.g["m2"] = [] #M2 vertex
-        for cl in m1:
-            for l in self.C[cl]:
-                for nei in self.hitmapC[-l]:
-                    self.g["m1"].append(nei)
-        for cl in m2:
-            for l in self.C[cl]:
-                for nei in self.hitmapC[-l]:
-                    self.g["m2"].append(nei)
-        for i in range(len(C)):
-            if i in m1 + m2: continue
-            self.g[i + 1] = []
-            for l in self.C[i]:
-                for nei in self.hitmapC[-l]:
-                    if (nei - 1) in m1:
-                        self.g[i + 1].append("m1")
-                    elif (nei - 1) in m2:
-                        self.g[i + 1].append("m2")
-                    else:
-                        self.g[i + 1].append(nei)
-            if len(self.g[i + 1]) == 0:
-                del self.g[i + 1]
-        self.originalG = dict(self.g)
-        return True
+    def partition(self):
+        cont.buildNXGraph()
+        if min(len(self.m1), len(self.m2)) == 0:
+            return None #failed to find disjoing MUSes
+        print("initialized")
+        cut_value, partition = nx.minimum_cut(self.nxG, "m1", "m2")
+        part1, part2 = partition
+        print("cut value", cut_value)
+        print("partition", len(part1), len(part2))
 
-    def vertexCutMUS(self):
-        self.buildGraph()
-        minlist = []
-        # Repeat 20 times to get a minimum
-        for i in range(0,20):
-            self.g = dict(self.originalG)
-            # Keep contracting the graph until we have 2 vertices
-            while(len(self.g) > 2):
-                self.contractEdge(self.getRandomEdge())
-                if len(self.g) % 10 == 0:
-                    print(len(self.g))
-            minlist.append(len(self.g[list(self.g.keys())[0]]))
-            print(minlist)
-        print("minimum out of 20 rounds:", min(minlist))
+        #TODO: create lists of clauses based on the two components. Note that node m1 corresponds to self.m1 and node m2 corresponds to self.m2
+        part1Clauses = set(self.m1)
+        part1Border = set()
+        for v in part1:
+            if "out" in v:
+                assert v[:-3] + "in" in part1
+                part1Clauses.add(int(v[:-3]) - 1) #fixing +1 offset
+            if "in" in v and not v[:-2] + "out" in part1:
+                part1Border.add(int(v[:-2]) - 1) #fixing +1 offset
+
+        part2Clauses = set(self.m2)
+        part2Border = set()
+        for v in part2:
+            if "in" in v:
+                part2Clauses.add(int(v[:-2]) - 1) #fixing +1 offset
+                assert v[:-2] + "out" in part2
+            if "out" in v and not v[:-3] + "in" in part2:
+                part2Border.add(int(v[:-3]) - 1) #fixing +1 offset
+
+        assert len(part1Border) == len(part2Border) == cut_value
+        border = part1Border
+        missing = set([i for i in range(len(C))]) - (part1Clauses.union(part2Clauses,border)) #these are not connected to the flip graph and hence can be added to either component
+        for m in missing:
+            part1Clauses.add(m)
+
+        assert len(C) == len(part1Clauses) + len(part2Clauses) + len(border)
+        return part1Clauses, part2Clauses, border
 
 import sys
 import argparse
@@ -216,30 +193,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("MSS counter")
     parser.add_argument("input_file", help = "A path to the input file. Either a .cnf or a .gcnf instance. See ./examples/")
     args = parser.parse_args()
-
     C,B = parse(args.input_file)
     cont = Contractor(C,B)
-    cont.buildNXGraph()
-    print("initialized")
-    cut_value, partition = nx.minimum_cut(cont.nxG, "m1", "m2")
-    part1, part2 = partition
-    print("cut value", cut_value)
-    print("partition", len(part1), len(part2))
-
-    #TODO: create lists of clauses based on the two components. Note that node m1 corresponds to self.m1 and node m2 corresponds to self.m2
-    part1Clauses = []
-    for v in part1:
-
-    part2Clauses = []
-
-
-
-
-
-
-
-
-
-
-
-
+    part = cont.partition()
