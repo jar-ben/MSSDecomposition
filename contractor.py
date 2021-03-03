@@ -157,7 +157,6 @@ class Contractor:
         cut_value, partition = nx.minimum_cut(self.nxG, "m1", "m2")
         part1, part2 = partition
         print("cut value", cut_value)
-        print("partition", len(part1), len(part2))
 
         #TODO: create lists of clauses based on the two components. Note that node m1 corresponds to self.m1 and node m2 corresponds to self.m2
         part1Clauses = set(self.m1)
@@ -183,8 +182,8 @@ class Contractor:
         missing = set([i for i in range(len(self.C))]) - (part1Clauses.union(part2Clauses,border)) #these are not connected to the flip graph and hence can be added to either component
         for m in missing:
             part1Clauses.add(m)
-
-        assert len(self.C) == len(part1Clauses) + len(part2Clauses) + len(border)
+        print("partition", len(part1Clauses), len(part2Clauses))
+        assert len(C) == len(part1Clauses) + len(part2Clauses) + len(border)
         return part1Clauses, part2Clauses, border
 
 import sys
