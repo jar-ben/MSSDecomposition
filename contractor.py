@@ -4,6 +4,7 @@ import random
 from random import randint
 import sys
 import subprocess as sp
+import networkx as nx
 sys.setrecursionlimit(10000)
 
 
@@ -126,6 +127,40 @@ class Contractor:
         v2 = list(set(self.g.keys()) - set(["m1", "m2"])) [random.randint(0,len(self.g)-1)]        
         v1 = self.g[v2] [random.randint(0,len(self.g[v2])-1)]
         return (v1,v2) 
+    
+    def buildNXGraph(self):
+        m1, m2 = self.disjointMUSes()
+        if min(len(m1), len(m2)) == 0:
+            print("failed to find disjoint MUSes")
+            return None
+        print("m1 size: {}, m2 size: {}".format(len(m1), len(m2)))
+        self.nxG = nx.DiGraph()
+        for cl in m1:
+            for l in self.C[cl]:
+                for nei in self.hitmapC[-l]:
+                    if nei - 1 in m1: continue
+                    self.nxG.add_edge("m1", str(nei) + "in", capacity=2)
+        for cl in m2:
+            for l in self.C[cl]:
+                for nei in self.hitmapC[-l]:
+                    if nei - 1 in m2: continue
+                    self.nxG.add_edge("m2", str(nei) + "in", capacity=2)
+        for i in range(len(C)):
+            if i in m1 + m2: continue
+            edges = False
+            for l in self.C[i]:
+                for nei in self.hitmapC[-l]:                    
+                    edges = True
+                    if (nei - 1) in m1:
+                        self.nxG.add_edge(str(i + 1) + "out", "m1", capacity=2)
+                    elif (nei - 1) in m2:
+                        self.nxG.add_edge(str(i + 1) + "out", "m2", capacity=2)
+                    else:
+                        self.nxG.add_edge(str(i + 1) + "out", str(nei) + "in", capacity=2)
+            if edges:
+                self.nxG.add_edge(str(i + i) + "in", str(i + 1) + "out", capacity=1)
+        print("nodes: {}, edges: {}".format(len(self.nxG.nodes), len(self.nxG.edges)))
+        return True
 
     def buildGraph(self):
         m1, m2 = self.disjointMUSes()
@@ -184,10 +219,18 @@ if __name__ == "__main__":
 
     C,B = parse(args.input_file)
     cont = Contractor(C,B)
+    cont.buildNXGraph()
     print("initialized")
-    cont.vertexCutMUS()
+    cut_value, partition = nx.minimum_cut(cont.nxG, "m1", "m2")
+    part1, part2 = partition
+    print("cut value", cut_value)
+    print("partition", len(part1), len(part2))
 
+    #TODO: create lists of clauses based on the two components. Note that node m1 corresponds to self.m1 and node m2 corresponds to self.m2
+    part1Clauses = []
+    for v in part1:
 
+    part2Clauses = []
 
 
 
