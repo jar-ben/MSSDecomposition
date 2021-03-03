@@ -150,7 +150,7 @@ class Contractor:
         return True
 
     def partition(self):
-        cont.buildNXGraph()
+        self.buildNXGraph()
         if min(len(self.m1), len(self.m2)) == 0:
             return None #failed to find disjoing MUSes
         print("initialized")
@@ -180,11 +180,11 @@ class Contractor:
 
         assert len(part1Border) == len(part2Border) == cut_value
         border = part1Border
-        missing = set([i for i in range(len(C))]) - (part1Clauses.union(part2Clauses,border)) #these are not connected to the flip graph and hence can be added to either component
+        missing = set([i for i in range(len(self.C))]) - (part1Clauses.union(part2Clauses,border)) #these are not connected to the flip graph and hence can be added to either component
         for m in missing:
             part1Clauses.add(m)
 
-        assert len(C) == len(part1Clauses) + len(part2Clauses) + len(border)
+        assert len(self.C) == len(part1Clauses) + len(part2Clauses) + len(border)
         return part1Clauses, part2Clauses, border
 
 import sys
