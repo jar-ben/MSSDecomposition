@@ -10,6 +10,7 @@ import os
 from functools import partial
 import signal
 from decomposeIter import Decomposer
+from contractor import Contractor
 from pysat.card import *
 import glob
 import itertools
@@ -323,15 +324,17 @@ def processComponent(C, hard, excluded, ttl = 1, mainInstance = True):
 
 def processFile(filename):
     Call, Ball = parse(filename)
+    Call = [Call[i] for i in getAutarky(Call)] #autarky trim
     assert len(Ball) == 0 #currently, we do not support .gcnf instances
     decomposer = Decomposer(Call, Ball)
     components = decomposer.sccs()
+    print("components:", len(components))
+    print("components sizes: ", " ".join([str(len(c[0])) for c in components]))
+
     #print("Number of components after the decomposition:", len(components))
     nontrivialComponents = 0
     counts = []
     iteration = 1
-    print("components:", len(components))
-    print("components sizes: ", " ".join([str(len(c[0])) for c in components]))
     for component in components:
         Cids,_ = component
         C = [Call[i] for i in Cids]
