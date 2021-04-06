@@ -12,7 +12,7 @@ import signal
 sys.path.insert(0, "/home/xbendik/bin/pysat")
 from pysat.formula import CNF
 from pysat.solvers import Solver, Minisat22
-
+from misc import *
 
 def receiveSignal(tempFiles, signalNumber, frame):
     print(tempFiles, signalNumber, frame)
@@ -267,7 +267,7 @@ class MSSDecomposer:
         i = 0
         for cl in self.C:
             renumCl = offsetClause(cl, self.mvarsOffset)
-            renumCl.append(self.acts["M"][i])
+            renumCl.append(-self.acts["M"][i])
             cls.append(renumCl)
             i += 1
         for cl in self.B:
@@ -283,8 +283,8 @@ class MSSDecomposer:
         #N = N1 cup N2
         for i in range(len(self.C)):
             clauses.append([-self.acts["N"][i], self.acts["N1"][i], self.acts["N2"][i]]) # N[i] -> N1[i] | N2[i]
-            clauses.append(-self.acts["N1"][i], self.acts["N"][i]) #N1[i] -> N[i]
-            clauses.append(-self.acts["N2"][i], self.acts["N"][i]) #N2[i] -> N2[i]
+            clauses.append([-self.acts["N1"][i], self.acts["N"][i]]) #N1[i] -> N[i]
+            clauses.append([-self.acts["N2"][i], self.acts["N"][i]]) #N2[i] -> N2[i]
 
         #C1 cap C2 = {}
         for i in range(len(self.C)):
@@ -310,23 +310,22 @@ class MSSDecomposer:
 
         #Disconnected
         for i in range(len(self.C)):
-            cl = self.C[i - 1]
-            for l in cl:
+            for l in self.C[i]:
                 for j in self.hitmapC[l]:
-                    clauses.append([-self.acts["C1"][i], -self.acts["C2"][i]]) #C1[i] -> not C2[j]
-                    clauses.append([-self.acts["C2"][i], -self.acts["C1"][i]]) #C2[i] -> not C1[j]
+                    clauses.append([-self.acts["C1"][j-1], -self.acts["C2"][j-1]]) #C1[i] -> not C2[j]
+                    clauses.append([-self.acts["C2"][j-1], -self.acts["C1"][j-1]]) #C2[i] -> not C1[j]
 
         #Minimal
         for i in range(len(self.C)):
             cl = [self.acts["C1"][i], self.acts["C2"][i]]
-            for l in self.C[i - 1]:
+            for l in self.C[i]:
                 for j in self.hitmapC[-l]:
-                    cl.append(self.acts["C1"][J])
+                    cl.append(self.acts["C1"][j-1])
             clauses.append(cl[:])
             cl = [self.acts["C1"][i], self.acts["C2"][i]]
-            for l in self.C[i - 1]:
+            for l in self.C[i]:
                 for j in self.hitmapC[-l]:
-                    cl.append(self.acts["C2"][j])
+                    cl.append(self.acts["C2"][j-1])
             clauses.append(cl[:])
 
         #disjoint MUSes M1 M2 as subsets of C1 and C2 (to ensure their unsatisfiability)
@@ -343,7 +342,7 @@ class MSSDecomposer:
         i = 0
         for cl in self.C:
             renumCl = offsetClause(cl, self.nvarsOffset)
-            renumCl.append(self.acts["N"][i])
+            renumCl.append(-self.acts["N"][i])
             clauses.append(renumCl)
             i += 1
         for cl in self.B:
@@ -358,9 +357,9 @@ class MSSDecomposer:
             renumCl = []
             for l in cl:
                 if l > 0:
-                    clauses.append([-self.acts["N"][i], -(l + self.nvarsOffset)])
+                    clauses.append([self.acts["N"][i], -(l + self.nvarsOffset)])
                 else:
-                    clauses.append([-self.acts["N"][i], -(l - self.nvarsOffset)])
+                    clauses.append([self.acts["N"][i], -(l - self.nvarsOffset)])
             i += 1
         return clauses
 
@@ -388,7 +387,7 @@ class MSSDecomposer:
                     for c in cube: #the other way implication
                         eq += [[-act, c]]
                     clauses += eq
-                cl = [-self.acts["N"][i]] + acts #either C[i] is activated or the literal -l is enforced by one of the activated clauses
+                cl = [self.acts["N"][i]] + acts #either C[i] is activated or the literal -l is enforced by one of the activated clauses
                 clauses.append(cl)
             #break  
         return clauses
@@ -410,10 +409,10 @@ class MSSDecomposer:
         result = "p cnf {} {}\n".format(maxVar(SSClauses), len(SSClauses))
         a = []
         e = []
-        result += "e " + " ".join([str(i) for i in activators + primeActivatorsFlatten + primeVars + unexCurrents]) + " 0 \n"
-        result += "a " + " ".join([str(i) for i in Vars + currents]) + " 0 \n"
-    for cl in main:
-        result += " ".join([str(l) for l in cl]) + " 0\n"
+        result += "e " + " ".join([str(i) for i in e]) + " 0 \n"
+        result += "a " + " ".join([str(i) for i in a]) + " 0 \n"
+        for cl in SSClauses:
+            result += " ".join([str(l) for l in cl]) + " 0\n"
 
     def run_basic(self):
         SSClauses = self.SS()
