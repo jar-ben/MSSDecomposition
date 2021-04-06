@@ -9,7 +9,9 @@ import argparse
 import os
 from functools import partial
 import signal
-
+sys.path.insert(0, "/home/xbendik/bin/pysat")
+from pysat.formula import CNF
+from pysat.solvers import Solver, Minisat22
 
 
 def receiveSignal(tempFiles, signalNumber, frame):
@@ -106,11 +108,14 @@ def offsetClause(cl, off):
     return [offset(l, off) for l in cl]    
 
 class MSSDecomposer:
-    def __init__(self, filename):
+    def __init__(self, filename = None, C = None):
         self.filename = filename
-        self.C, self.B = parse(filename)
+        if filename:
+            self.C, self.B = parse(filename)
+        else:
+            self.C, self.B = C, []
 
-        self.imuTrim()
+        #self.imuTrim()
         self.dimension = len(self.C)
         self.maxVar = 2*self.dimension + 2*maxVar(self.C + self.B)
         self.rid = randint(1,10000000)
@@ -134,6 +139,7 @@ class MSSDecomposer:
                 assert l in self.lits
                 self.hitmapB[l].append(i) #note that here we store 0-based index as opposed to hitmapC
 
+
         #selection variables for individual wrappers. True means selected
         self.w2 = True
         self.w3 = True
@@ -145,6 +151,69 @@ class MSSDecomposer:
         self.LSSFile = "/var/tmp/LSS_{}.cnf".format(self.rid)
         self.LSSIndFile = self.LSSFile[:-4] + "_ind.cnf"
         self.tmpFiles = [self.SSFile, self.SSIndFile, self.LSSFile, self.LSSIndFile]
+
+        #VARIABLES INFO
+        #N: 1 -- dimension
+        #N1: dimension + 1 -- 2*dimension
+        #N2: 2*dimension + 1 -- 3*dimension
+        #C1: 3*dimension + 1 -- 4*dimension
+        #C2: 4*dimension + 1 -- 5*dimension
+        #N': 5*dimension + 1 -- 6*dimension
+        #F's variables: 6*dimension + 1 -- 6*dimension + Vars(F)
+        self.acts = {}
+        self.acts["N"] = [i + 1 for i in range(len(self.C))]
+        self.acts["N1"] = [i + 1 + len(self.C) for i in range(len(self.C))]
+        self.acts["N2"] = [i + 1 + 2*len(self.C) for i in range(len(self.C))]
+        self.acts["C1"] = [i + 1 + 3*len(self.C) for i in range(len(self.C))]
+        self.acts["C2"] = [i + 1 + 4*len(self.C) for i in range(len(self.C))]
+        self.acts["M"] = [i + 1 + 5*len(self.C) for i in range(len(self.C))]
+        self.nvarsOffset = 6*self.dimension
+        self.mvarsOffset = 6*self.dimension + maxVar(self.C) 
+        self.vars = {}
+        self.vars["Nvars"] = [v + self.nvarsOffset for v in variables(self.C)]       
+        self.vars["Mvars"] = [v + self.mvarsOffset for v in variables(self.C)]       
+        
+        self.minAct = self.vars["Mvars"][-1] + 1
+    
+
+    def isMSS(self, N):
+        s = Solver(name = "g4")
+        Ncls = []
+        for i in range(len(self.C)):
+            if i not in N:
+                Ncls.append(self.C[i])
+
+        for i in N:
+            s = Solver(name = "g4")
+            for cl in Ncls:
+                s.add_clause(cl)
+            s.add_clause(self.C[i])
+            if s.solve(): return False
+        return True
+
+    def disjointMUSes(self):
+        assert len(self.B) == 0
+        filename = "./tmp/disjoint_" + str(randint(1,10000000)) + ".cnf"
+        exportCNF(self.C, filename)
+        cmd = "timeout 300 ./unimus_disjoint -a marco {}".format(filename)
+        #print(cmd)
+        out = run(cmd, 60)
+        if not "disjoint pair" in out:
+            return [],[]
+        reading = False
+        m1 = []
+        m2 = []
+        for line in out.splitlines():
+            if reading and len(m1) == 0:
+                m1 = [int(i) for i in line.rstrip().split()]
+            elif reading and len(m2) == 0:
+                m2 = [int(i) for i in line.rstrip().split()]
+                break
+            elif reading:
+                assert False
+            if line.rstrip() == "disjoint pair":
+                reading = True
+        return m1, m2
 
     def imuTrim(self):
         assert self.B == []
@@ -172,75 +241,126 @@ class MSSDecomposer:
     #N2: 2*dimension + 1 -- 3*dimension
     #C1: 3*dimension + 1 -- 4*dimension
     #C2: 4*dimension + 1 -- 5*dimension
-    #F's variables: 5*dimension + 1 -- 5*dimension + Vars(F)
+    #N': 5*dimension + 1 -- 6*dimension
+    #F's variables: 6*dimension + 1 -- 7*dimension + Vars(F)
+    #(N')'s variables: 7*dimension + 1 -- 8*dimension + Vars(F) (used to reason about supersets of N)
     def SS(self):
-        #encode that N is an "MSS" (or its under-approximation)
+        #encode that N is an element of an MSS wrapper
         clauses = self.W1()
         if self.w4:
             clauses += self.W4()
         if self.w5:
-            act = max(self.maxVar, maxVar(clauses))
+            act = max(self.minAct, maxVar(clauses))
             clauses += self.W5(act)
+
+        #encode that N is an MSS via qbf encoding, i.e., every M > N is unsat
+        #first we encode that M > N
+        act = max(self.minAct, maxVar(clauses)) + 1
+        for i in range(len(self.C)):
+            clauses.append([-self.acts["N"][i], self.acts["M"][i]]) # N[i] -> M[i]
+            clauses.append([-(act + i), -self.acts["N"][i]]) #the following three encode the proper superset 
+            clauses.append([-(act + i), self.acts["M"][i]])
+            clauses.append([self.acts["N"][i], -self.acts["M"][i], act + i])
+        clauses.append([act + i for i in range(len(self.C))])
+        #second, we encode that N' is unsat
+        cls = []
+        i = 0
+        for cl in self.C:
+            renumCl = offsetClause(cl, self.mvarsOffset)
+            renumCl.append(self.acts["M"][i])
+            cls.append(renumCl)
+            i += 1
+        for cl in self.B:
+            cls.append(offsetClause(cl, self.mvarsOffset))
+        act = max(self.minAct, maxVar(clauses))
+        clauses += CNF(from_clauses=cls).negate(act).clauses
+          
+
+        #both N1 and N2 are non-empty
+        clauses.append(self.acts["N1"])
+        clauses.append(self.acts["N2"])
 
         #N = N1 cup N2
         for i in range(len(self.C)):
-            clauses.append([-i, i + self.dimension, i + 2*self.dimension]) # N[i] -> N1[i] | N2[i]
-            clauses.append([-(i + self.dimension), i]) # N1[i] -> N[i]
-            clauses.append([-(i + 2*self.dimension), i]) # N2[i] -> N[i]
+            clauses.append([-self.acts["N"][i], self.acts["N1"][i], self.acts["N2"][i]]) # N[i] -> N1[i] | N2[i]
+            clauses.append(-self.acts["N1"][i], self.acts["N"][i]) #N1[i] -> N[i]
+            clauses.append(-self.acts["N2"][i], self.acts["N"][i]) #N2[i] -> N2[i]
 
-        #N1 cap N2 = {}
+        #C1 cap C2 = {}
         for i in range(len(self.C)):
-            clauses.append([i + self.dimension, i + 2*self.dimension])
-            clauses.append([-(i + self.dimension), -(i + 2*self.dimension)])
+            clauses.append([-self.acts["C1"][i], -self.acts["C2"][i]])
 
-        #C1 > N1
-        act = max(self.maxVar, maxVar(clauses)) + 1
+        #C1 supsetneq N1
+        act = max(self.minAct, maxVar(clauses)) + 1
         for i in range(len(self.C)):
-            clauses.append([-(i + self.dimension), i + 3*self.dimension]) # N1[i] -> C1[i]
-            clauses.append([-(act + i), -(i + self.dimension)]) #the following three encode that C1 is a proper superset of N1 (using act as tseitin variable)
-            clauses.append([-(act + i), i + 3*self.dimension])
-            clauses.append([i + self.dimension, -(i + 3*self.dimension), act + i])
+            clauses.append([-self.acts["N1"][i], self.acts["C1"][i]]) # N1[i] -> C1[i]
+            clauses.append([-(act + i), -self.acts["N1"][i]]) #the following three encode the proper superset 
+            clauses.append([-(act + i), self.acts["C1"][i]])
+            clauses.append([self.acts["N1"][i], -self.acts["C1"][i], act + i])
         clauses.append([act + i for i in range(len(self.C))])
             
-        #C2 > N2
-        act = max(self.maxVar, maxVar(clauses)) + 1
+        #C2 supsetneq N2
+        act = max(self.minAct, maxVar(clauses)) + 1
         for i in range(len(self.C)):
-            clauses.append([-(i + 2*self.dimension), i + 4*self.dimension]) # N2[i] -> C2[i]
-            clauses.append([-(act + i), -(i + 2*self.dimension)]) #the following three encode that C1 is a proper superset of N1 (using act as tseitin variable)
-            clauses.append([-(act + i), i + 4*self.dimension])
-            clauses.append([i + 2*self.dimension, -(i + 4*self.dimension), act + i])
+            clauses.append([-self.acts["N2"][i], self.acts["C2"][i]]) # N2[i] -> C2[i]
+            clauses.append([-(act + i), -self.acts["N2"][i]]) #the following three encode the proper superset 
+            clauses.append([-(act + i), self.acts["C2"][i]])
+            clauses.append([self.acts["N2"][i], -self.acts["C2"][i], act + i])
         clauses.append([act + i for i in range(len(self.C))])
 
         #Disconnected
-
+        for i in range(len(self.C)):
+            cl = self.C[i - 1]
+            for l in cl:
+                for j in self.hitmapC[l]:
+                    clauses.append([-self.acts["C1"][i], -self.acts["C2"][i]]) #C1[i] -> not C2[j]
+                    clauses.append([-self.acts["C2"][i], -self.acts["C1"][i]]) #C2[i] -> not C1[j]
 
         #Minimal
+        for i in range(len(self.C)):
+            cl = [self.acts["C1"][i], self.acts["C2"][i]]
+            for l in self.C[i - 1]:
+                for j in self.hitmapC[-l]:
+                    cl.append(self.acts["C1"][J])
+            clauses.append(cl[:])
+            cl = [self.acts["C1"][i], self.acts["C2"][i]]
+            for l in self.C[i - 1]:
+                for j in self.hitmapC[-l]:
+                    cl.append(self.acts["C2"][j])
+            clauses.append(cl[:])
+
+        #disjoint MUSes M1 M2 as subsets of C1 and C2 (to ensure their unsatisfiability)
+        m1, m2 = self.disjointMUSes()
+        for i in m1:
+            clauses.append([self.acts["C1"][i]])
+        for i in m2:
+            clauses.append([self.acts["C2"][i]])
 
         return clauses
 
     def W1(self):
         clauses = []
-        i = 1
+        i = 0
         for cl in self.C:
-            renumCl = offsetClause(cl, 5*self.dimension)
-            renumCl.append(i)
+            renumCl = offsetClause(cl, self.nvarsOffset)
+            renumCl.append(self.acts["N"][i])
             clauses.append(renumCl)
             i += 1
         for cl in self.B:
-            clauses.append(offsetClause(cl, 5*self.dimension))
+            clauses.append(offsetClause(cl, self.nvarsOffset))
         return clauses
 
     def W4(self):
         clauses = []
         #max model
-        i = 1
+        i = 0
         for cl in self.C:
             renumCl = []
             for l in cl:
                 if l > 0:
-                    clauses.append([-i, -(l + 5*self.dimension)])
+                    clauses.append([-self.acts["N"][i], -(l + self.nvarsOffset)])
                 else:
-                    clauses.append([-i, -(l - 5*self.dimension)])
+                    clauses.append([-self.acts["N"][i], -(l - self.nvarsOffset)])
             i += 1
         return clauses
 
@@ -253,7 +373,7 @@ class MSSDecomposer:
                 for d in self.hitmapC[-l]:
                     act += 1
                     acts.append(act)
-                    cube = [-d] + [-offset(k, 5*self.dimension) for k in self.C[d - 1] if k != -l] #C[d] is activated and l is the only literal of C[d] satisfied by the model
+                    cube = [-d] + [-offset(k, self.nvarsOffset) for k in self.C[d - 1] if k != -l] #C[d] is activated and l is the only literal of C[d] satisfied by the model
                     #eq encodes that act is equivalent to the cube
                     eq = [[act] + [-x for x in cube]] # one way implication
                     for c in cube: #the other way implication
@@ -262,23 +382,70 @@ class MSSDecomposer:
                 for d in self.hitmapB[-l]:
                     act += 1
                     acts.append(act)
-                    cube = [-offset(k, 5*self.dimension) for k in self.B[d] if k != -l] #B[d] is activated and l is the only literal of B[d] satisfied by the model
+                    cube = [-offset(k, self.nvarsOffset) for k in self.B[d] if k != -l] #B[d] is activated and l is the only literal of B[d] satisfied by the model
                     #eq encodes that act is equivalent to the cube
                     eq = [[act] + [-x for x in cube]] # one way implication
                     for c in cube: #the other way implication
                         eq += [[-act, c]]
                     clauses += eq
-                cl = [-(i + 1)] + acts #either C[i] is activated or the literal -l is enforced by one of the activated clauses
+                cl = [-self.acts["N"][i]] + acts #either C[i] is activated or the literal -l is enforced by one of the activated clauses
                 clauses.append(cl)
             #break  
         return clauses
     
     def run(self):
+        return self.run_qbf() if self.qbf else self.run_basic()
+
+    #VARIABLES INFO
+    #N: 1 -- dimension
+    #N1: dimension + 1 -- 2*dimension
+    #N2: 2*dimension + 1 -- 3*dimension
+    #C1: 3*dimension + 1 -- 4*dimension
+    #C2: 4*dimension + 1 -- 5*dimension
+    #N': 5*dimension + 1 -- 6*dimension
+    #F's variables: 6*dimension + 1 -- 7*dimension + Vars(F)
+    #(N')'s variables: 7*dimension + 1 -- 8*dimension + Vars(F) (used to reason about supersets of N)
+    def run_qbf(self):
         SSClauses = self.SS()
-        SSFile = self.SSFile
-        exportCNF(SSClauses, SSFile)
-        #TODO: use pysat here to solve the formula        
-        os.remove(SSFile)
+        result = "p cnf {} {}\n".format(maxVar(SSClauses), len(SSClauses))
+        a = []
+        e = []
+        result += "e " + " ".join([str(i) for i in activators + primeActivatorsFlatten + primeVars + unexCurrents]) + " 0 \n"
+        result += "a " + " ".join([str(i) for i in Vars + currents]) + " 0 \n"
+    for cl in main:
+        result += " ".join([str(l) for l in cl]) + " 0\n"
+
+    def run_basic(self):
+        SSClauses = self.SS()
+        s = Solver(name = "g4")
+        for cl in SSClauses:
+            s.add_clause(cl)
+        divisions = []
+        #for _ in range(len(self.C)):
+        for iter in range(1000):
+            print(iter)
+            if not s.solve(): break
+            model = s.get_model()
+            C1 = [i - 3*len(self.C) for i in range(3*len(self.C), 4*len(self.C)) if model[i] > 0]
+            C2 = [i - 4*len(self.C) for i in range(4*len(self.C), 5*len(self.C)) if model[i] > 0]
+            #print("C:", len(self.C), "C1:", len(C1), "C2:", len(C2))
+            block = [-model[i] for i in range(3*len(self.C), 5*len(self.C))]
+            s.add_clause(block[:])
+            divisions.append([C1, C2])
+
+            s1 = Solver(name = "g4")
+            for i in C1:
+                s1.add_clause(self.C[i])
+            s2 = Solver(name = "g4")
+            for i in C2:
+                s2.add_clause(self.C[i])
+
+            N = [i for i in range(len(self.C)) if model[i] > 0]
+            if self.isMSS(N):
+                print("\n\n----AAA---\n\n")
+                return divisions[-1:]
+        print("\n\n---BBB---\n\n")
+        return divisions
 
 import sys
 if __name__ == "__main__":
@@ -290,6 +457,7 @@ if __name__ == "__main__":
     parser.add_argument("--w4", action='store_true', help = "Use the wrapper W4 (multiple wrappers can be used simultaneously)")
     parser.add_argument("--w5", action='store_true', help = "Use the wrapper W5 (multiple wrappers can be used simultaneously)")
     parser.add_argument("--imu", action='store_true', help = "Use IMU.")
+    parser.add_argument("--qbf", action='store_true', help = "Ensure that N is an MSS via QBF solver.", default=False)
     args = parser.parse_args()
 
     decomposer = MSSDecomposer(args.input_file)
@@ -300,5 +468,6 @@ if __name__ == "__main__":
     decomposer.w2 = args.w2
     decomposer.w4 = args.w4
     decomposer.w5 = args.w5
+    decomposer.qbf = args.qbf
 
     decomposer.run()
