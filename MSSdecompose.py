@@ -107,6 +107,9 @@ def offset(a, off):
 def offsetClause(cl, off):
     return [offset(l, off) for l in cl]    
 
+def isSubset(A, B):
+    return set(A) <= set(B)
+
 class MSSDecomposer:
     def __init__(self, filename = None, C = None):
         self.filename = filename
@@ -152,6 +155,8 @@ class MSSDecomposer:
         self.LSSIndFile = self.LSSFile[:-4] + "_ind.cnf"
         self.tmpFiles = [self.SSFile, self.SSIndFile, self.LSSFile, self.LSSIndFile]
 
+        self.qbf = False
+
         #VARIABLES INFO
         #N: 1 -- dimension
         #N1: dimension + 1 -- 2*dimension
@@ -174,7 +179,45 @@ class MSSDecomposer:
         self.vars["Mvars"] = [v + self.mvarsOffset for v in variables(self.C)]       
         
         self.minAct = self.vars["Mvars"][-1] + 1
-    
+ 
+    def validateDecomposition(self, N, N1, N2, C1, C2, B):
+        minimal = self.isMinimal(C1, C2, B)
+        decomposition = self.isDecomposition(C1, C2)
+        C2unsat = not self.isSat(C2)
+        C1unsat = not self.isSat(C1)
+        NisMSS = self.isMSS(N)
+
+        print("decomposition:", decomposition)
+        print("minimal:", minimal)
+        print("C1 unsat:", C1unsat)
+        print("C2 unsat:", C2unsat)
+        print("N is an MSS:", NisMSS)
+        print("N1 <= C1", set(N1) <= set(C1))
+        print("N2 <= C2", set(N2) <= set(C2))
+        print("C1 C2 disjoint", not bool(set(C1) & set(C2)))
+
+    def isDecomposition(self, C1, C2):
+        for c1 in C1:
+            for l in self.C[c1]:
+                for c2 in self.hitmapC[-l]:
+                    if c2 in C2: return False
+        return True
+
+    def isMinimal(self, C1, C2, B):
+        for b in B:
+            C1hit, C2hit = False, False
+            for l in self.C[b]:
+                for c in self.hitmapC[-l]:
+                    if c in C1: C1hit = True
+                    if c in C2: C2hit = True
+            if not (C1hit and C2hit): return False
+        return True
+
+    def isSat(self, X):
+        s = Solver(name = "g4")
+        for x in X:
+            s.add_clause(self.C[x])
+        return s.solve()
 
     def isMSS(self, N):
         s = Solver(name = "g4")
@@ -255,25 +298,25 @@ class MSSDecomposer:
 
         #encode that N is an MSS via qbf encoding, i.e., every M > N is unsat
         #first we encode that M > N
-        act = max(self.minAct, maxVar(clauses)) + 1
-        for i in range(len(self.C)):
-            clauses.append([-self.acts["N"][i], self.acts["M"][i]]) # N[i] -> M[i]
-            clauses.append([-(act + i), -self.acts["N"][i]]) #the following three encode the proper superset 
-            clauses.append([-(act + i), self.acts["M"][i]])
-            clauses.append([self.acts["N"][i], -self.acts["M"][i], act + i])
-        clauses.append([act + i for i in range(len(self.C))])
-        #second, we encode that N' is unsat
-        cls = []
-        i = 0
-        for cl in self.C:
-            renumCl = offsetClause(cl, self.mvarsOffset)
-            renumCl.append(-self.acts["M"][i])
-            cls.append(renumCl)
-            i += 1
-        for cl in self.B:
-            cls.append(offsetClause(cl, self.mvarsOffset))
-        act = max(self.minAct, maxVar(clauses))
-        clauses += CNF(from_clauses=cls).negate(act).clauses
+        #act = max(self.minAct, maxVar(clauses)) + 1
+        #for i in range(len(self.C)):
+        #    clauses.append([-self.acts["N"][i], self.acts["M"][i]]) # N[i] -> M[i]
+        #    clauses.append([-(act + i), -self.acts["N"][i]]) #the following three encode the proper superset 
+        #    clauses.append([-(act + i), self.acts["M"][i]])
+        #    clauses.append([self.acts["N"][i], -self.acts["M"][i], act + i])
+        #clauses.append([act + i for i in range(len(self.C))])
+        ##second, we encode that N' is unsat
+        #cls = []
+        #i = 0
+        #for cl in self.C:
+        #    renumCl = offsetClause(cl, self.mvarsOffset)
+        #    renumCl.append(-self.acts["M"][i])
+        #    cls.append(renumCl)
+        #    i += 1
+        #for cl in self.B:
+        #    cls.append(offsetClause(cl, self.mvarsOffset))
+        #act = max(self.minAct, maxVar(clauses))
+        #clauses += CNF(from_clauses=cls).negate(act).clauses
           
 
         #both N1 and N2 are non-empty
@@ -393,17 +436,10 @@ class MSSDecomposer:
         return clauses
     
     def run(self):
-        return self.run_qbf() if self.qbf else self.run_basic()
+        N, N1, N2, C1, C2, B = self.run_qbf() if self.qbf else self.run_basic()
+        self.validateDecomposition(N, N1, N2, C1, C2, B)
+        return C1, C2, B
 
-    #VARIABLES INFO
-    #N: 1 -- dimension
-    #N1: dimension + 1 -- 2*dimension
-    #N2: 2*dimension + 1 -- 3*dimension
-    #C1: 3*dimension + 1 -- 4*dimension
-    #C2: 4*dimension + 1 -- 5*dimension
-    #N': 5*dimension + 1 -- 6*dimension
-    #F's variables: 6*dimension + 1 -- 7*dimension + Vars(F)
-    #(N')'s variables: 7*dimension + 1 -- 8*dimension + Vars(F) (used to reason about supersets of N)
     def run_qbf(self):
         SSClauses = self.SS()
         result = "p cnf {} {}\n".format(maxVar(SSClauses), len(SSClauses))
@@ -425,26 +461,16 @@ class MSSDecomposer:
             print(iter)
             if not s.solve(): break
             model = s.get_model()
-            C1 = [i - 3*len(self.C) for i in range(3*len(self.C), 4*len(self.C)) if model[i] > 0]
-            C2 = [i - 4*len(self.C) for i in range(4*len(self.C), 5*len(self.C)) if model[i] > 0]
-            #print("C:", len(self.C), "C1:", len(C1), "C2:", len(C2))
-            block = [-model[i] for i in range(3*len(self.C), 5*len(self.C))]
-            s.add_clause(block[:])
-            divisions.append([C1, C2])
-
-            s1 = Solver(name = "g4")
-            for i in C1:
-                s1.add_clause(self.C[i])
-            s2 = Solver(name = "g4")
-            for i in C2:
-                s2.add_clause(self.C[i])
-
-            N = [i for i in range(len(self.C)) if model[i] > 0]
-            if self.isMSS(N):
-                print("\n\n----AAA---\n\n")
-                return divisions[-1:]
-        print("\n\n---BBB---\n\n")
-        return divisions
+            print(model[:3])
+            C1 = [i for i in range(len(self.C)) if model[self.acts["C1"][i]-1] > 0]
+            C2 = [i for i in range(len(self.C)) if model[self.acts["C2"][i]-1] > 0]
+            N1 = [i for i in range(len(self.C)) if model[self.acts["N1"][i]-1] > 0]
+            N2 = [i for i in range(len(self.C)) if model[self.acts["N2"][i]-1] > 0]
+            N = [i for i in range(len(self.C)) if model[self.acts["N"][i]-1] > 0]
+            B = [i for i in range(len(self.C)) if i not in (C1+C2)]
+            return N, N1, N2, C1, C2, B
+        print("unsat")
+        return None
 
 import sys
 if __name__ == "__main__":
