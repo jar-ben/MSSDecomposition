@@ -136,7 +136,7 @@ class MSSDecomposer:
         for i in range(len(self.C)):
             for l in self.C[i]:
                 assert l in self.lits
-                self.hitmapC[l].append(i + 1) #+1 offset
+                self.hitmapC[l].append(i) #+1 offset
         for i in range(len(self.B)):
             for l in self.B[i]:
                 assert l in self.lits
@@ -182,12 +182,12 @@ class MSSDecomposer:
  
     def validateDecomposition(self, N, N1, N2, C1, C2, B):
         minimal = self.isMinimal(C1, C2, B)
-        decomposition = self.isDecomposition(C1, C2)
+        disconnected = self.isDisconnected(C1, C2)
         C2unsat = not self.isSat(C2)
         C1unsat = not self.isSat(C1)
         NisMSS = self.isMSS(N)
 
-        print("decomposition:", decomposition)
+        print("disconnected:", disconnected)
         print("minimal:", minimal)
         print("C1 unsat:", C1unsat)
         print("C2 unsat:", C2unsat)
@@ -196,11 +196,13 @@ class MSSDecomposer:
         print("N2 <= C2", set(N2) <= set(C2))
         print("C1 C2 disjoint", not bool(set(C1) & set(C2)))
 
-    def isDecomposition(self, C1, C2):
+    def isDisconnected(self, C1, C2):
         for c1 in C1:
             for l in self.C[c1]:
                 for c2 in self.hitmapC[-l]:
-                    if c2 in C2: return False
+                    if c2 in C2: 
+                        print(self.C[c1], self.C[c2])
+                        return False
         return True
 
     def isMinimal(self, C1, C2, B):
@@ -288,13 +290,16 @@ class MSSDecomposer:
     #F's variables: 6*dimension + 1 -- 7*dimension + Vars(F)
     #(N')'s variables: 7*dimension + 1 -- 8*dimension + Vars(F) (used to reason about supersets of N)
     def SS(self):
+        self.verbosity = 2
         #encode that N is an element of an MSS wrapper
+        if self.verbosity > 1: print("encoding wrapper")
         clauses = self.W1()
         if self.w4:
             clauses += self.W4()
         if self.w5:
             act = max(self.minAct, maxVar(clauses))
             clauses += self.W5(act)
+        if self.verbosity > 1: print("encoded wrapper")
 
         #encode that N is an MSS via qbf encoding, i.e., every M > N is unsat
         #first we encode that M > N
@@ -351,33 +356,40 @@ class MSSDecomposer:
             clauses.append([self.acts["N2"][i], -self.acts["C2"][i], act + i])
         clauses.append([act + i for i in range(len(self.C))])
 
+        if self.verbosity > 1: print("encoding disconnected")
         #Disconnected
         for i in range(len(self.C)):
             for l in self.C[i]:
-                for j in self.hitmapC[l]:
-                    clauses.append([-self.acts["C1"][j-1], -self.acts["C2"][j-1]]) #C1[i] -> not C2[j]
-                    clauses.append([-self.acts["C2"][j-1], -self.acts["C1"][j-1]]) #C2[i] -> not C1[j]
+                for j in self.hitmapC[-l]:
+                    clauses.append([-self.acts["C1"][i], -self.acts["C2"][j]]) #C1[i] -> not C2[j]
+                    clauses.append([-self.acts["C2"][i], -self.acts["C1"][j]]) #C2[i] -> not C1[j]
+        if self.verbosity > 1: print("encoded disconnected")
 
+        if self.verbosity > 1: print("encoding minimality")
         #Minimal
         for i in range(len(self.C)):
             cl = [self.acts["C1"][i], self.acts["C2"][i]]
             for l in self.C[i]:
                 for j in self.hitmapC[-l]:
-                    cl.append(self.acts["C1"][j-1])
+                    cl.append(self.acts["C1"][j])
             clauses.append(cl[:])
             cl = [self.acts["C1"][i], self.acts["C2"][i]]
             for l in self.C[i]:
                 for j in self.hitmapC[-l]:
-                    cl.append(self.acts["C2"][j-1])
+                    cl.append(self.acts["C2"][j])
             clauses.append(cl[:])
+        if self.verbosity > 1: print("encoded minimality")
 
+        if self.verbosity > 1: print("encoding disjoint MUSes")
         #disjoint MUSes M1 M2 as subsets of C1 and C2 (to ensure their unsatisfiability)
         m1, m2 = self.disjointMUSes()
         for i in m1:
             clauses.append([self.acts["C1"][i]])
         for i in m2:
             clauses.append([self.acts["C2"][i]])
+        if self.verbosity > 1: print("encoded disjoint MUSes")
 
+        if self.verbosity > 1: print("encoding completed")
         return clauses
 
     def W1(self):
@@ -415,7 +427,7 @@ class MSSDecomposer:
                 for d in self.hitmapC[-l]:
                     act += 1
                     acts.append(act)
-                    cube = [-d] + [-offset(k, self.nvarsOffset) for k in self.C[d - 1] if k != -l] #C[d] is activated and l is the only literal of C[d] satisfied by the model
+                    cube = [-self.acts["N"][d]] + [-offset(k, self.nvarsOffset) for k in self.C[d] if k != -l] #C[d] is activated and l is the only literal of C[d] satisfied by the model
                     #eq encodes that act is equivalent to the cube
                     eq = [[act] + [-x for x in cube]] # one way implication
                     for c in cube: #the other way implication
