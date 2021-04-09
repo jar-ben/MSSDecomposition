@@ -117,7 +117,7 @@ class MSSDecomposer:
             self.C, self.B = parse(filename)
         else:
             self.C, self.B = C, []
-
+        assert self.B == []
         #self.imuTrim()
         self.dimension = len(self.C)
         self.maxVar = 2*self.dimension + 2*maxVar(self.C + self.B)
@@ -291,7 +291,7 @@ class MSSDecomposer:
     #F's variables: 6*dimension + 1 -- 7*dimension + Vars(F)
     #(N')'s variables: 7*dimension + 1 -- 8*dimension + Vars(F) (used to reason about supersets of N)
     def SS(self):
-        self.verbosity = 2
+        self.verbosity = 1
         #encode that N is an element of an MSS wrapper
         if self.verbosity > 1: print("encoding wrapper")
         clauses = self.W1()
@@ -383,6 +383,8 @@ class MSSDecomposer:
 
         if self.verbosity > 1: print("encoding disjoint MUSes")
         #disjoint MUSes M1 M2 as subsets of C1 and C2 (to ensure their unsatisfiability)
+        return clauses
+
         m1, m2 = self.disjointMUSes()
         for i in m1:
             clauses.append([self.acts["C1"][i]])
@@ -449,8 +451,14 @@ class MSSDecomposer:
         return clauses
     
     def run(self):
+        if len(self.C) > 10:
+            name = str(randint(1,1000000)) + "C.cnf"
+            print("exporting", name)
+            exportCNF(self.C, name)
         N, N1, N2, C1, C2, B = self.run_qbf() if self.qbf else self.run_basic()
-        self.validateDecomposition(N, N1, N2, C1, C2, B)
+        print(N, N1)
+        if N is not None:
+            self.validateDecomposition(N, N1, N2, C1, C2, B)
         return C1, C2, B
 
     def run_qbf(self):
@@ -464,26 +472,21 @@ class MSSDecomposer:
             result += " ".join([str(l) for l in cl]) + " 0\n"
 
     def run_basic(self):
+        print("running basic")
         SSClauses = self.SS()
         s = Solver(name = "g4")
         for cl in SSClauses:
             s.add_clause(cl)
-        divisions = []
-        #for _ in range(len(self.C)):
-        for iter in range(1000):
-            print(iter)
-            if not s.solve(): break
-            model = s.get_model()
-            print(model[:3])
-            C1 = [i for i in range(len(self.C)) if model[self.acts["C1"][i]-1] > 0]
-            C2 = [i for i in range(len(self.C)) if model[self.acts["C2"][i]-1] > 0]
-            N1 = [i for i in range(len(self.C)) if model[self.acts["N1"][i]-1] > 0]
-            N2 = [i for i in range(len(self.C)) if model[self.acts["N2"][i]-1] > 0]
-            N = [i for i in range(len(self.C)) if model[self.acts["N"][i]-1] > 0]
-            B = [i for i in range(len(self.C)) if i not in (C1+C2)]
-            return N, N1, N2, C1, C2, B
-        print("unsat")
-        return None
+        if not s.solve():
+            return None, None, None, None, None, None
+        model = s.get_model()
+        C1 = [i for i in range(len(self.C)) if model[self.acts["C1"][i]-1] > 0]
+        C2 = [i for i in range(len(self.C)) if model[self.acts["C2"][i]-1] > 0]
+        N1 = [i for i in range(len(self.C)) if model[self.acts["N1"][i]-1] > 0]
+        N2 = [i for i in range(len(self.C)) if model[self.acts["N2"][i]-1] > 0]
+        N = [i for i in range(len(self.C)) if model[self.acts["N"][i]-1] > 0]
+        B = [i for i in range(len(self.C)) if i not in (C1+C2)]
+        return N, N1, N2, C1, C2, B
 
 import sys
 if __name__ == "__main__":

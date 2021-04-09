@@ -30,12 +30,15 @@ def receiveSignal(tempFiles, signalNumber, frame):
             print("removed")
     sys.exit()
 
-def maxVar(C):
-    m = 0
+def variables(C):
+    v = set()
     for cl in C:
         for l in cl:
-            m = max(m,abs(l))
-    return m
+            v.add(abs(l))
+    return v
+
+def maxVar(C):
+    return max(variables(C))
 
 def renderWcnf(Hard, Soft):
     nvariables = maxVar(Hard + Soft)
@@ -122,7 +125,7 @@ def getAutarky(C):
                 return [int(c) - 1 for c in line.split()[1:]]
     else: return [i for i in range(len(C))]
 
-def rime(C, hard = [], excluded = [], limit = 0):
+def rime(C, hard = [], excluded = [], limit = 0, auxiliaryHard = []):
     if checkSAT(C, excluded):
         return [[]]
 
@@ -136,6 +139,9 @@ def rime(C, hard = [], excluded = [], limit = 0):
         else:
             mapa.append(i)
             S.append(C[i])
+
+    for h in auxiliaryHard:
+        H.append(h)
 
     if len(S) == 0:
         return []
@@ -171,7 +177,7 @@ def printMCSes(mcses):
     for mcs in mcses:
         print("MCS~", mcs)
 
-def mcsls(C, hard, excluded, limit = 0):
+def mcsls(C, hard, excluded, limit = 0, auxiliaryHard = []):
     if checkSAT(C, excluded):
         return [[]]
 
@@ -186,22 +192,56 @@ def mcsls(C, hard, excluded, limit = 0):
             mapa.append(i)
             S.append(C[i])
 
+    for h in auxiliaryHard:
+        H.append(h)
+
     if len(S) == 0:
         return []
 
     filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./mcsls -num {} {}".format(3600, limit, filename)
+    print(cmd)
     out = run(cmd, 3600)
     os.remove(filename)
     mcses = []
     for line in out.splitlines():
         if line[:7] == "c MCS: ":
-            mcs = [int(c) for c in line[7:].rstrip().split(" ")] #0 based indexing
-            mcses.append([mapa[i - (1 + len(H))] for i in mcs])
+            mcs = [int(c) for c in line[7:].rstrip().split(" ")] #1 based indexing
+            mcses.append([mapa[i - (1 + len(H) + len(auxiliaryHard))] for i in mcs])
 
     return mcses
 
 def projection(source, target):
     return [i for i in source if i in target]
 
+
+def computeCadet(filename, activators):
+    cmd = "./tools/cadet --minimize {}".format(filename)
+    proc = sp.Popen([cmd], stdout=sp.PIPE, shell=True)
+    (out, err) = proc.communicate()
+    out = out.decode("utf-8")
+    assert "SAT" in out
+    if not "UNSAT" in out:
+        print("UNSATISFIABLE") #this means that there is no unexplored MUS in the cell
+    else:
+        Cids = {}
+        for i in range(len(activators)):
+            Cids[activators[i]] = i + 1
+        reading = False
+        for line in out.splitlines():
+            if reading:
+                assert line[0] == "V"
+                MUS = [Cids[int(l)] for l in line.split(" ")[1:] if int(l) in Cids]
+            if "UNSAT" in line:
+                reading = True
+        print("SOLUTION")
+        print(" ".join([str(n) for n in MUS]) + " 0")
+
+def simplify2(filename, result):
+    cmd = "./tools/qratpre+ --no-ble --no-qratu --no-qrate --print-formula {} > {}".format(filename, result)
+    #cmd = "./tools/qratpre+ --print-formula {} > {}".format(filename, result)
+    proc = sp.Popen([cmd], stdout=sp.PIPE, shell=True)
+    (out, err) = proc.communicate()
+    out = out.decode("utf-8")
+    print("simplified")
