@@ -195,6 +195,7 @@ class MSSDecomposer:
         print("N1 <= C1", set(N1) <= set(C1))
         print("N2 <= C2", set(N2) <= set(C2))
         print("C1 C2 disjoint", not bool(set(C1) & set(C2)))
+        print("|C1| = {}, |C2| = {}, |B| = {}".format(len(C1), len(C2), len(B)))
 
     def isDisconnected(self, C1, C2):
         for c1 in C1:
