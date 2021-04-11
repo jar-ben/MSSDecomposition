@@ -10,9 +10,12 @@ import os
 from functools import partial
 import signal
 sys.path.insert(0, "/home/xbendik/bin/pysat")
+sys.path.insert(0, "/home/xbendik/bin/pysat/examples")
 from pysat.formula import CNF
 from pysat.solvers import Solver, Minisat22
 from misc import *
+from rc2 import RC2
+from pysat.formula import WCNF
 
 def receiveSignal(tempFiles, signalNumber, frame):
     print(tempFiles, signalNumber, frame)
@@ -148,6 +151,12 @@ class MSSDecomposer:
         self.w3 = True
         self.w4 = True
         self.w5 = True
+        
+        self.w2 = False #TODO: one of the wrapper is buggy so we disabled all of them for now
+        self.w3 = False
+        self.w4 = False
+        self.w5 = False
+        self.maxsat = False
 
         self.SSFile = "/var/tmp/SS_{}.cnf".format(self.rid)
         self.SSIndFile = self.SSFile[:-4] + "_ind.cnf"
@@ -383,7 +392,6 @@ class MSSDecomposer:
 
         if self.verbosity > 1: print("encoding disjoint MUSes")
         #disjoint MUSes M1 M2 as subsets of C1 and C2 (to ensure their unsatisfiability)
-        return clauses
 
         m1, m2 = self.disjointMUSes()
         for i in m1:
@@ -455,24 +463,42 @@ class MSSDecomposer:
             name = str(randint(1,1000000)) + "C.cnf"
             print("exporting", name)
             exportCNF(self.C, name)
-        N, N1, N2, C1, C2, B = self.run_qbf() if self.qbf else self.run_basic()
-        print(N, N1)
+        if self.qbf:
+            N, N1, N2, C1, C2, B = self.run_qbf()
+        elif self.maxsat:
+            N, N1, N2, C1, C2, B = self.run_maxsat()
+        else:
+            N, N1, N2, C1, C2, B = self.run_basic()
         if N is not None:
             self.validateDecomposition(N, N1, N2, C1, C2, B)
         return C1, C2, B
 
     def run_qbf(self):
-        SSClauses = self.SS()
-        result = "p cnf {} {}\n".format(maxVar(SSClauses), len(SSClauses))
-        a = []
-        e = []
-        result += "e " + " ".join([str(i) for i in e]) + " 0 \n"
-        result += "a " + " ".join([str(i) for i in a]) + " 0 \n"
+        pass
+
+    def run_maxsat(self):
+        SSClauses = self.SS()        
+        wcnf = WCNF()
         for cl in SSClauses:
-            result += " ".join([str(l) for l in cl]) + " 0\n"
+            wcnf.append(cl)
+        for x in self.acts["N"]:
+            wcnf.append([x], weight = 1)
+
+        with RC2(wcnf) as rc2:
+            model = rc2.compute()
+            if model == None:
+                return None, None, None, None, None, None
+
+            C1 = [i for i in range(len(self.C)) if model[self.acts["C1"][i]-1] > 0]
+            C2 = [i for i in range(len(self.C)) if model[self.acts["C2"][i]-1] > 0]
+            N1 = [i for i in range(len(self.C)) if model[self.acts["N1"][i]-1] > 0]
+            N2 = [i for i in range(len(self.C)) if model[self.acts["N2"][i]-1] > 0]
+            N = [i for i in range(len(self.C)) if model[self.acts["N"][i]-1] > 0]
+            B = [i for i in range(len(self.C)) if i not in (C1+C2)]
+            return N, N1, N2, C1, C2, B
+
 
     def run_basic(self):
-        print("running basic")
         SSClauses = self.SS()
         s = Solver(name = "g4")
         for cl in SSClauses:
@@ -499,6 +525,7 @@ if __name__ == "__main__":
     parser.add_argument("--w5", action='store_true', help = "Use the wrapper W5 (multiple wrappers can be used simultaneously)")
     parser.add_argument("--imu", action='store_true', help = "Use IMU.")
     parser.add_argument("--qbf", action='store_true', help = "Ensure that N is an MSS via QBF solver.", default=False)
+    parser.add_argument("--maxsat", action='store_true', help = "Use a MaxSAT solver.", default=False)
     args = parser.parse_args()
 
     decomposer = MSSDecomposer(args.input_file)
@@ -506,9 +533,11 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, partial(receiveSignal, decomposer.tmpFiles))
     signal.signal(signal.SIGTERM, partial(receiveSignal, decomposer.tmpFiles))
 
-    decomposer.w2 = args.w2
-    decomposer.w4 = args.w4
-    decomposer.w5 = args.w5
-    decomposer.qbf = args.qbf
+    decomposer.maxsat = args.maxsat
+
+    #decomposer.w2 = args.w2
+    #decomposer.w4 = args.w4
+    #decomposer.w5 = args.w5
+    #decomposer.qbf = args.qbf
 
     decomposer.run()
