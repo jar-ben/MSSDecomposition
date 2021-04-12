@@ -165,12 +165,27 @@ def rime(C, hard = [], excluded = [], limit = 0, auxiliaryHard = []):
     assert mssesCount == len(mcses)
     return mcses
 
-def checkSAT(C, excluded):
+def checkSAT(C, excluded = []):
     s = Solver(name = "g4")
     for i in range(len(C)):
         if not i in excluded:
             s.add_clause(C[i])
     return s.solve()
+
+def isMCS(C, N):
+    D = [C[i] for i in range(len(C)) if i not in N]
+    if not checkSAT(D):
+        print("not even a CS")
+        return False
+
+    for n in N:
+        D = [C[i] for i in range(len(C)) if i not in N]
+        D.append(C[n])
+        if checkSAT(D): 
+            print("adding {}, {} makes it sat".format(n, C[n]))
+            return False
+    return True
+
 
 def printMCSes(mcses):
     return
@@ -208,7 +223,7 @@ def mcsls(C, hard, excluded, limit = 0, auxiliaryHard = []):
     for line in out.splitlines():
         if line[:7] == "c MCS: ":
             mcs = [int(c) for c in line[7:].rstrip().split(" ")] #1 based indexing
-            mcses.append([mapa[i - (1 + len(H) + len(auxiliaryHard))] for i in mcs])
+            mcses.append([mapa[i - (1 + len(H))] for i in mcs])
 
     return mcses
 

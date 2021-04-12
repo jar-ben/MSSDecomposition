@@ -114,8 +114,9 @@ def isSubset(A, B):
     return set(A) <= set(B)
 
 class MSSDecomposer:
-    def __init__(self, filename = None, C = None):
+    def __init__(self, filename = None, C = None, mapa = []):
         self.filename = filename
+        self.mapa = mapa
         if filename:
             self.C, self.B = parse(filename)
         else:
@@ -400,6 +401,11 @@ class MSSDecomposer:
             clauses.append([self.acts["C2"][i]])
         if self.verbosity > 1: print("encoded disjoint MUSes")
 
+        #map encoding (atLeastOne)
+        for cl in self.mapa:
+            clauses.append([self.acts["C1"][i] for i in cl] + [self.acts["C2"][i] for i in cl])
+
+
         if self.verbosity > 1: print("encoding completed")
         return clauses
 
@@ -481,8 +487,8 @@ class MSSDecomposer:
         wcnf = WCNF()
         for cl in SSClauses:
             wcnf.append(cl)
-        for x in self.acts["N"]:
-            wcnf.append([x], weight = 1)
+        for i in range(len(self.C)):
+            wcnf.append([self.acts["C1"][i], self.acts["C2"][i]], weight = 1)
 
         with RC2(wcnf) as rc2:
             model = rc2.compute()
