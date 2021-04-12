@@ -254,6 +254,7 @@ class MSSDecomposer:
         cmd = "timeout 300 ./unimus_disjoint -a marco {}".format(filename)
         #print(cmd)
         out = run(cmd, 60)
+        os.remove(filename)
         if not "disjoint pair" in out:
             return [],[]
         reading = False
@@ -404,7 +405,7 @@ class MSSDecomposer:
         #map encoding (atLeastOne)
         for cl in self.mapa:
             clauses.append([self.acts["C1"][i] for i in cl] + [self.acts["C2"][i] for i in cl])
-
+        
 
         if self.verbosity > 1: print("encoding completed")
         return clauses
@@ -465,10 +466,6 @@ class MSSDecomposer:
         return clauses
     
     def run(self):
-        if len(self.C) > 10:
-            name = str(randint(1,1000000)) + "C.cnf"
-            print("exporting", name)
-            exportCNF(self.C, name)
         if self.qbf:
             N, N1, N2, C1, C2, B = self.run_qbf()
         elif self.maxsat:
@@ -477,6 +474,8 @@ class MSSDecomposer:
             N, N1, N2, C1, C2, B = self.run_basic()
         if N is not None:
             self.validateDecomposition(N, N1, N2, C1, C2, B)
+            #if self.isSat(C1) or self.isSat(C2):
+            #    return None, None, None
         return C1, C2, B
 
     def run_qbf(self):

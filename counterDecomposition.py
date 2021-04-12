@@ -58,7 +58,7 @@ class Counter:
         print(self.filename, "nontrivial Components:", nontrivialComponents, "msses:", msses, "counts:", counts)
         return msses
 
-    def getMCSes(self, C, hard, excluded, atLeastOne, limit = 0):
+    def getMCSes(self, C, hard, excluded, atLeastOne, limit = 50000):
         assert len(hard) == 0
         H = []
         S = []
@@ -86,6 +86,9 @@ class Counter:
         for mcs in mcses:
             for b in atLeastOne:
                 assert len([i for i in b if i not in (mcs + excluded)]) > 0
+
+        if len(mcses) == limit:
+            print("MCS COUNT LIMIT REACHED")
 
         return mcses
 
@@ -167,6 +170,7 @@ class Counter:
 
         atLeast = []
         for a in atLeastOne:
+            a = [i for i in a if i not in excluded]
             atLeast.append([mapaRe[i] for i in a])
         decomposer = MSSDecomposer(C = [C[i] for i in range(len(C)) if i not in excluded], mapa = atLeast)
         C1, C2, B = decomposer.run()
@@ -201,13 +205,16 @@ class Counter:
         return self.decomposeViaArticulationPoint(C, atLeastOne, excluded)
 
     def processComponent(self, C, atLeastOne, excluded, ttl = 1, mainInstance = True):
+        for a in atLeastOne:
+            if len([i for i in a if i not in excluded]) == 0:
+                return []
         print("ttl", ttl)
         if ttl == 0:
             mcses = self.getMCSes(C, [], excluded, atLeastOne)
             if mainInstance: printMCSes(mcses)
             return mcses
 
-        C1, C2, B = self.decompose(C, excluded, atLeastOne)
+        C1, C2, B = self.decompose(C, atLeastOne, excluded)
         if C1 == None:
             print("C1 is None")
             mcses = self.getMCSes(C, [], excluded, atLeastOne)
@@ -221,19 +228,19 @@ class Counter:
 
         #Get MSSes when art is presented
         artMSSes = self.processComponent(C, atLeastOne + [B], excluded, min(ttl - 1, 0))
-
+        print("artMSSes:", len(artMSSes))
 
         #Get MSSes in the individual components
         componentsMCSes = []
         excludedC1 = [i for i in range(len(C)) if i not in C1]
         if not checkSAT(C, excludedC1):
-            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC1, ttl = min(0, ttl - 1), mainInstance = False))
+            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC1, ttl = min(5, ttl - 1), mainInstance = False))
         excludedC2 = [i for i in range(len(C)) if i not in C2]
         if not checkSAT(C, excludedC2):
-            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC2, ttl = min(0, ttl - 1), mainInstance = False))
+            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC2, ttl = min(5, ttl - 1), mainInstance = False))
 
-        combinedMSSes = self.validCombinations2(C, excluded, artMSSes, B, componentsMCSes)
-        print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
+        #combinedMSSes = self.validCombinations2(C, excluded, artMSSes, B, componentsMCSes)
+        #print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
         combinedMSSes = self.validCombinations(C, excluded, artMSSes, B, componentsMCSes)
         print("-- artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
         if mainInstance: printMCSes(combinedMSSes)
@@ -246,9 +253,12 @@ class Counter:
             if i not in excluded:
                 mapaRe[i] = len(D)
                 D.append(C[i])
-        print([mapaRe[i] for i in B], [C[i] for i in B])
         for mcs in combinedMSSes:
             assert isMCS(D, [mapaRe[i] for i in mcs])        
+
+        if len(combinedMSSes) > 0:
+            print("\n\n\n \t\t combined: {}\n\n\n".format(len(combinedMSSes)))
+
 
         return artMSSes + combinedMSSes
 
