@@ -111,6 +111,27 @@ def parse(filename):
                     C.append(cl)
     return C,B
 
+def getAutarky2(C, excluded):
+    mapa = []
+    D = []
+    for i in range(len(C)):
+        if i not in excluded:
+            mapa.append(i)
+            D.append(C[i])
+
+    filename = "./tmp/autarky{}.cnf".format(randint(1,10000000))
+    exportCNF(D, filename)
+    cmd = "timeout 3600 python3 autarky.py {}".format(filename)
+    #print(cmd)
+    out = run(cmd, 3600)
+    os.remove(filename)
+    if "autarky vars" in out:
+        for line in out.splitlines():
+            line = line.rstrip()
+            if line[:2] == "v ":
+                return [mapa[int(c) - 1] for c in line.split()[1:]]
+    else: return [mapa[i] for i in range(len(D))]
+
 def getAutarky(C):
     filename = "./tmp/autarky{}.cnf".format(randint(1,10000000))
     exportCNF(C, filename)

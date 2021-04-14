@@ -27,6 +27,8 @@ class Counter:
         self.Call = [self.Call[i] for i in getAutarky(self.Call)] #autarky trim, included from misc.py
         self.MCSEnumerator = "mcsls"
         self.ttl = 200
+        self.debug = False
+        self.explicitMCSes = 0
 
     def run(self):
         decomposer = Decomposer(self.Call, [])
@@ -55,7 +57,7 @@ class Counter:
         msses = 1
         for count in counts:
             msses *= count
-        print(self.filename, "nontrivial Components:", nontrivialComponents, "msses:", msses, "counts:", counts)
+        print(self.filename, "nontrivial Components:", nontrivialComponents, "msses:", msses, "counts:", counts, "explicit:", self.explicitMCSes)
         return msses
 
     def getMCSes(self, C, hard, excluded, atLeastOne, limit = 50000):
@@ -79,17 +81,18 @@ class Counter:
         elif self.MCSEnumerator == "rime":
             mcses = rime(C, H, excluded, limit, auxiliaryHards)
 
-        #assertion
-        for mcs in mcses:
-            assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + excluded)])
-        #assertion
-        for mcs in mcses:
-            for b in atLeastOne:
-                assert len([i for i in b if i not in (mcs + excluded)]) > 0
+        if self.debug:
+            #assertion
+            for mcs in mcses:
+                assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + excluded)])
+            #assertion
+            for mcs in mcses:
+                for b in atLeastOne:
+                    assert len([i for i in b if i not in (mcs + excluded)]) > 0
 
         if len(mcses) == limit:
             print("MCS COUNT LIMIT REACHED")
-
+        self.explicitMCSes += len(mcses)
         return mcses
 
     def verifyDecomposition(self, C, components):
@@ -106,7 +109,7 @@ class Counter:
         s = Solver(name = "g4")
         for mcs in artMCSes:
             s.add_clause([i + 1 for i in mcs]) #standard MSS map blocking clause
-            assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + excluded)])
+            if self.debug: assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + excluded)])
 
         def isValid(mcs):
             assumptions = [i + 1 if i not in (mcs + B) else -(i + 1) for i in range(len(C)) if i not in excluded]
@@ -117,7 +120,7 @@ class Counter:
             mcs = []
             for comp in item:
                 mcs += comp
-            assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + B + excluded)])
+            if self.debug: assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + B + excluded)])
             if isValid(mcs):
                 combinedMSSes.append(mcs + B)
         return combinedMSSes
@@ -173,6 +176,7 @@ class Counter:
             a = [i for i in a if i not in excluded]
             atLeast.append([mapaRe[i] for i in a])
         decomposer = MSSDecomposer(C = [C[i] for i in range(len(C)) if i not in excluded], mapa = atLeast)
+        decomposer.maxsat = True
         C1, C2, B = decomposer.run()
         if C1 == None:
             return C1, C2, B
@@ -204,12 +208,17 @@ class Counter:
         #    return self.decomposeViaCut(C, hard, atLeastOne, excluded)
         return self.decomposeViaArticulationPoint(C, atLeastOne, excluded)
 
+
     def processComponent(self, C, atLeastOne, excluded, ttl = 1, mainInstance = True):
+        #autarky trim
+        aut = getAutarky2(C, excluded)
+        excluded = [i for i in range(len(C)) if i not in aut]
+
         for a in atLeastOne:
             if len([i for i in a if i not in excluded]) == 0:
                 return []
         print("ttl", ttl)
-        if ttl == 0:
+        if ttl == 0 or len(C) - len(excluded) < 10:
             mcses = self.getMCSes(C, [], excluded, atLeastOne)
             if mainInstance: printMCSes(mcses)
             return mcses
@@ -221,10 +230,10 @@ class Counter:
             if mainInstance: printMCSes(mcses)
             return mcses
 
-        #assertion
-        U = [i for i in range(len(C)) if (i in (C1 + C2 + B) and i not in excluded)]
-        U2 = [i for i in range(len(C)) if i not in excluded]
-        assert set(U) == set(U2)
+        if self.debug:
+            U = [i for i in range(len(C)) if (i in (C1 + C2 + B) and i not in excluded)]
+            U2 = [i for i in range(len(C)) if i not in excluded]
+            assert set(U) == set(U2)
 
         #Get MSSes when art is presented
         artMSSes = self.processComponent(C, atLeastOne + [B], excluded, min(ttl - 1, 0))
@@ -234,10 +243,13 @@ class Counter:
         componentsMCSes = []
         excludedC1 = [i for i in range(len(C)) if i not in C1]
         if not checkSAT(C, excludedC1):
-            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC1, ttl = min(5, ttl - 1), mainInstance = False))
+            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC1, ttl = min(0, ttl - 1), mainInstance = False))
+            print("C1 MSSes:", len(componentsMCSes[-1]))
         excludedC2 = [i for i in range(len(C)) if i not in C2]
         if not checkSAT(C, excludedC2):
-            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC2, ttl = min(5, ttl - 1), mainInstance = False))
+            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC2, ttl = min(0, ttl - 1), mainInstance = False))
+            print("C2 MSSes:", len(componentsMCSes[-1]))
+
 
         #combinedMSSes = self.validCombinations2(C, excluded, artMSSes, B, componentsMCSes)
         #print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
@@ -245,16 +257,16 @@ class Counter:
         print("-- artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
         if mainInstance: printMCSes(combinedMSSes)
 
-        #assertion
-        print("checking {} MCSes".format(len(combinedMSSes)))
-        mapaRe = {}
-        D = []
-        for i in range(len(C)):
-            if i not in excluded:
-                mapaRe[i] = len(D)
-                D.append(C[i])
-        for mcs in combinedMSSes:
-            assert isMCS(D, [mapaRe[i] for i in mcs])        
+        if self.debug:
+            print("checking {} MCSes".format(len(combinedMSSes)))
+            mapaRe = {}
+            D = []
+            for i in range(len(C)):
+                if i not in excluded:
+                    mapaRe[i] = len(D)
+                    D.append(C[i])
+            for mcs in combinedMSSes:
+                assert isMCS(D, [mapaRe[i] for i in mcs])        
 
         if len(combinedMSSes) > 0:
             print("\n\n\n \t\t combined: {}\n\n\n".format(len(combinedMSSes)))
@@ -284,6 +296,7 @@ if __name__ == "__main__":
     parser.add_argument("--MCSEnumerator", help = "MCSEnumeration subroutine. Available options: [mcsls,rime]", default = "mcsls")
     parser.add_argument("--decomposer", help = "Decomposition technique. Available options: [ap,mss]", default = "mss")
     parser.add_argument("--ttl", help = "Maximum recursion depth", type = int, default = 200)
+    parser.add_argument("--debug", action = 'store_true')
     args = parser.parse_args()
 
     if args.input_file == "tests":
@@ -293,4 +306,5 @@ if __name__ == "__main__":
         counter.MCSEnumerator = args.MCSEnumerator
         counter.decompositionTechnique = args.decomposer
         counter.ttl = args.ttl
+        counter.debug = args.debug
         counter.run()

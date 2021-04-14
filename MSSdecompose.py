@@ -486,8 +486,10 @@ class MSSDecomposer:
         wcnf = WCNF()
         for cl in SSClauses:
             wcnf.append(cl)
-        for i in range(len(self.C)):
-            wcnf.append([self.acts["C1"][i], self.acts["C2"][i]], weight = 1)
+        indices = [i for i in range(len(self.C))]
+        random.shuffle(indices)
+        for i in indices:
+            wcnf.append([self.acts["C1"][i], self.acts["C2"][i]], weight = randint(1,2))
 
         with RC2(wcnf) as rc2:
             model = rc2.compute()
