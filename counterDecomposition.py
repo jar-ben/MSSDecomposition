@@ -29,6 +29,7 @@ class Counter:
         self.ttl = 200
         self.debug = False
         self.explicitMCSes = 0
+        self.verbosity = 1
 
     def run(self):
         decomposer = Decomposer(self.Call, [])
@@ -38,6 +39,7 @@ class Counter:
 
         nontrivialComponents = 0
         counts = []
+        componentsMCSes = []
         for component in components:
             Cids,_ = component
             C = [self.Call[i] for i in Cids]
@@ -48,16 +50,33 @@ class Counter:
                 s.add_clause(cl)
             if s.solve(): continue #the whole component is satisfiable
             print("component size:", len(C))
-            C = [C[i] for i in getAutarky(C)] #autarky trim
+            A = getAutarky(C)
+            C = [C[i] for i in A] #autarky trim
             print("autarky size:", len(C))
             nontrivialComponents += 1
-            count = len(self.processComponent(C, [], [], self.ttl))
-            counts.append(count)
+            MCSes = self.processComponent(C, [], [], self.ttl)
+            MCSesOrg = []
+            for m in MCSes:
+                MCSesOrg.append([Cids[A[i]] for i in m])
+
+            componentsMCSes.append(MCSesOrg)
+            counts.append(len(componentsMCSes[-1]))
+
 
         msses = 1
         for count in counts:
             msses *= count
         print(self.filename, "nontrivial Components:", nontrivialComponents, "msses:", msses, "counts:", counts, "explicit:", self.explicitMCSes)
+
+
+        if self.verbosity >= 2:
+            with open("mcses.txt", "w") as f:
+                for item in itertools.product(*componentsMCSes):
+                    mcs = []
+                    for m in item:
+                        mcs += m
+                    print("MCS {}".format(" ".join([str(i) for i in mcs])))
+
         return msses
 
     def getMCSes(self, C, hard, excluded, atLeastOne, limit = 50000):
@@ -296,6 +315,7 @@ if __name__ == "__main__":
     parser.add_argument("--MCSEnumerator", help = "MCSEnumeration subroutine. Available options: [mcsls,rime]", default = "mcsls")
     parser.add_argument("--decomposer", help = "Decomposition technique. Available options: [ap,mss]", default = "mss")
     parser.add_argument("--ttl", help = "Maximum recursion depth", type = int, default = 200)
+    parser.add_argument("--verbosity", help = "Verbosity level. Set it to 2 to print indices of MCSes.", type = int, default = 1)
     parser.add_argument("--debug", action = 'store_true')
     args = parser.parse_args()
 
@@ -307,4 +327,5 @@ if __name__ == "__main__":
         counter.decompositionTechnique = args.decomposer
         counter.ttl = args.ttl
         counter.debug = args.debug
+        counter.verbosity = args.verbosity
         counter.run()
