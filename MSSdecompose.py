@@ -489,7 +489,9 @@ class MSSDecomposer:
         indices = [i for i in range(len(self.C))]
         random.shuffle(indices)
         for i in indices:
-            wcnf.append([self.acts["C1"][i], self.acts["C2"][i]], weight = randint(1,2))
+            wcnf.append([self.acts["C1"][i]], weight = (i % 2) + 1)
+            wcnf.append([self.acts["C2"][i]], weight = ((i + 1) % 2) + 1)
+            #wcnf.append([self.acts["C1"][i], self.acts["C2"][i]], weight = randint(1,2))
 
         with RC2(wcnf) as rc2:
             model = rc2.compute()
