@@ -9,12 +9,14 @@ import argparse
 import os
 from functools import partial
 import signal
-sys.path.insert(0, "/home/xbendik/bin/pysat")
-sys.path.insert(0, "/home/xbendik/bin/pysat/examples")
+#sys.path.insert(0, "/home/xbendik/bin/pysat")
 from pysat.formula import CNF
 from pysat.solvers import Solver, Minisat22
 from misc import *
-from rc2 import RC2
+# the RC2 solver is a part of the PySAT library and it should be located in the pysat/examples folder.
+# in case you are not able to load RC2, uncomment and update the below line to point to the location of pysat/examples in your system
+# sys.path.insert(0, "/home/xbendik/bin/pysat/examples")
+from rc2 import RC2 
 from pysat.formula import WCNF
 
 def receiveSignal(tempFiles, signalNumber, frame):

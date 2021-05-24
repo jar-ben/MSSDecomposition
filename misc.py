@@ -14,7 +14,7 @@ from pysat.card import *
 import glob
 import itertools
 
-sys.path.insert(0, "/home/xbendik/bin/pysat")
+#sys.path.insert(0, "/home/xbendik/bin/pysat")
 from pysat.formula import CNF
 from pysat.solvers import Solver, Minisat22
 
