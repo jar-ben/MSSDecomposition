@@ -268,7 +268,7 @@ def tests(args):
             }
     for test in files:
         counter = Counter(test)
-        counter.MCSEnumerator = args.MCSEnumerator
+        counter.MCSEnumerator = "rime"
         counter.ttl = args.ttl
         startTime = time.time()
         assert files[test] == counter.run()
@@ -277,7 +277,7 @@ def tests(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("MSS counter")
     parser.add_argument("input_file", help = "A path to the input file. Either a .cnf or a .gcnf instance. See ./examples/")
-    parser.add_argument("--MCSEnumerator", help = "MCSEnumeration subroutine. Available options: [mcsls,rime]", default = "mcsls")
+    #parser.add_argument("--MCSEnumerator", help = "MCSEnumeration subroutine. Available options: [mcsls,rime]", default = "mcsls")
     parser.add_argument("--ttl", help = "Maximum recursion depth", type = int, default = 200)
     parser.add_argument("--verbosity", help = "Verbosity level. Set it to 2 to print indices of MCSes.", type = int, default = 1)
     parser.add_argument("--debug", action = 'store_true')
@@ -288,7 +288,7 @@ if __name__ == "__main__":
     else:
         counter = Counter(args.input_file)
         #counter.MCSEnumerator = args.MCSEnumerator
-        counter.MCSEnumerator = "mcsls"
+        counter.MCSEnumerator = "rime" #we do not distribute mcsls
         counter.ttl = args.ttl
         counter.debug = args.debug
         counter.verbosity = args.verbosity

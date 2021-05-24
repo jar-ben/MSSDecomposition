@@ -169,6 +169,7 @@ def rime(C, hard = [], excluded = [], limit = 0, auxiliaryHard = []):
     filename = "./tmp/rime{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "./tools/rime -v 1 {}".format(filename)
+    #print(cmd)
     out = run(cmd, 3600)
     os.remove(filename)
     assert "Number of MSSes" in out
@@ -180,8 +181,9 @@ def rime(C, hard = [], excluded = [], limit = 0, auxiliaryHard = []):
     for line in out:
         if line[:4] == "MCS ":
             line = line.rstrip().split(" ")[1:]
-            mcs = [int(c) for c in line if int(c) < len(C)] #0-based indexing
-            mcses.append(mcs)
+            mcs = [int(c) for c in line if int(c) <= len(C)] #0-based indexing
+            mcses.append([mapa[i - len(H)] for i in mcs])
+            #mcses.append(mcs)
     assert mssesCount == len(mcses)
     return mcses
 
@@ -236,7 +238,7 @@ def mcsls(C, hard, excluded, limit = 0, auxiliaryHard = []):
     filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
     cmd = "timeout {} ./tools/mcsls -num {} {}".format(3600, limit, filename)
-    print(cmd)
+    #print(cmd)
     out = run(cmd, 3600)
     os.remove(filename)
     mcses = []
