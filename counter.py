@@ -27,6 +27,9 @@ class Counter:
         self.Call = [self.Call[i] for i in getAutarky(self.Call)] #autarky trim, included from misc.py
         self.MCSEnumerator = "mcsls"
         self.ttl = 200
+        self.debug = False
+        self.explicitMCSes = 0
+        self.verbosity = 1
 
     def run(self):
         decomposer = Decomposer(self.Call, [])
@@ -36,6 +39,7 @@ class Counter:
 
         nontrivialComponents = 0
         counts = []
+        componentsMCSes = []
         for component in components:
             Cids,_ = component
             C = [self.Call[i] for i in Cids]
@@ -46,39 +50,69 @@ class Counter:
                 s.add_clause(cl)
             if s.solve(): continue #the whole component is satisfiable
             print("component size:", len(C))
-            C = [C[i] for i in getAutarky(C)] #autarky trim
+            A = getAutarky(C)
+            C = [C[i] for i in A] #autarky trim
             print("autarky size:", len(C))
             nontrivialComponents += 1
-            count = len(self.processComponent(C, [], [], [], self.ttl))
-            counts.append(count)
+            MCSes = self.processComponent(C, [], [], self.ttl)
+            MCSesOrg = []
+            for m in MCSes:
+                MCSesOrg.append([Cids[A[i]] for i in m])
+
+            componentsMCSes.append(MCSesOrg)
+            counts.append(len(componentsMCSes[-1]))
+
 
         msses = 1
         for count in counts:
             msses *= count
-        print(self.filename, "nontrivial Components:", nontrivialComponents, "msses:", msses, "counts:", counts)
+        print(self.filename, "nontrivial Components:", nontrivialComponents, "msses:", msses, "counts:", counts, "explicit:", self.explicitMCSes)
+
+
+        if self.verbosity >= 2:
+            with open("mcses.txt", "w") as f:
+                for item in itertools.product(*componentsMCSes):
+                    mcs = []
+                    for m in item:
+                        mcs += m
+                    print("MCS {}".format(" ".join([str(i) for i in mcs])))
+
         return msses
 
-    def getMCSes(self, C, hard, excluded, atLeastOne, limit = 0):
-        H = hard[:]
+    def getMCSes(self, C, hard, excluded, atLeastOne, limit = 50000):
+        assert len(hard) == 0
+        H = []
         S = []
-        for s in atLeastOne:
-            if len(s) == 1:
-                H += s
-            else:
-                S.append(s)
 
         auxiliaryHards = []
-        for s in S:
+        for s in atLeastOne:
             cl = []
             for i in s:
-                cl += C[i]
+                if i not in excluded:
+                    cl += C[i]
+            if len(cl) == 0:
+                return []
             auxiliaryHards.append(cl)
 
+        mcses = []
         if self.MCSEnumerator == "mcsls":
-            return mcsls(C, H, excluded, limit, auxiliaryHards)
+            mcses = mcsls(C, H, excluded, limit, auxiliaryHards)
         elif self.MCSEnumerator == "rime":
-            return rime(C, H, excluded, limit, auxiliaryHards)
-        assert False #self.MCSEnumerator should be either rime or mcsls
+            mcses = rime(C, H, excluded, limit, auxiliaryHards)
+
+        if self.debug:
+            #assertion
+            for mcs in mcses:
+                assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + excluded)])
+            #assertion
+            for mcs in mcses:
+                for b in atLeastOne:
+                    assert len([i for i in b if i not in (mcs + excluded)]) > 0
+
+        if len(mcses) == limit:
+            print("MCS COUNT LIMIT REACHED")
+        self.explicitMCSes += len(mcses)
+        return mcses
 
     def verifyDecomposition(self, C, components):
         c1, c2 = components[:2]
@@ -90,13 +124,14 @@ class Counter:
 
     #checkpoint
     #return MSSes that are not subsets of artMSSes
-    def validCombinations2(self, C, excluded, artMCSes, cut, componentsMCSes, components):
+    def validCombinations2(self, C, excluded, artMCSes, B, componentsMCSes):
         s = Solver(name = "g4")
         for mcs in artMCSes:
             s.add_clause([i + 1 for i in mcs]) #standard MSS map blocking clause
+            if self.debug: assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + excluded)])
 
         def isValid(mcs):
-            assumptions = [i + 1 if i not in mcs else -(i + 1) for i in range(len(C)) if i not in excluded]
+            assumptions = [i + 1 if i not in (mcs + B) else -(i + 1) for i in range(len(C)) if i not in excluded]
             return s.solve(assumptions)
 
         combinedMSSes = []
@@ -104,24 +139,21 @@ class Counter:
             mcs = []
             for comp in item:
                 mcs += comp
-            assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + cut)], excluded)
+            if self.debug: assert checkSAT([C[i] for i in range(len(C)) if i not in (mcs + B + excluded)])
             if isValid(mcs):
-                combinedMSSes.append(mcs + cut)
+                combinedMSSes.append(mcs + B)
         return combinedMSSes
 
-    def validCombinations(self, C, excluded, artMSSes, art, componentsMCSes, components, hard = []):
+    def validCombinations(self, C, excluded, artMSSes, B, componentsMCSes):
         s = Solver(name = "g4")
         maxVariable = 0
         for clause in C:
             maxVariable = max(maxVariable, max([abs(l) for l in clause]))
         activators = [x + maxVariable + 1 for x in range(len(C))]
         for i in range(len(C)):
-            if i in hard:
-                s.add_clause(C[i])
-            elif i in art:
-                s.add_clause(C[i])
-            else:
-                s.add_clause(C[i] + [activators[i]])
+            s.add_clause(C[i] + [activators[i]])
+
+        s.add_clause([-activators[i] for i in B])
 
         temp = list(itertools.product(*componentsMCSes))
         allCombinations = []
@@ -134,9 +166,9 @@ class Counter:
         #print("all combs:", len(allCombinations))
         combinedMSSes = []
         for mcs in allCombinations:
-            assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded)]
+            assumptions = [-activators[i] for i in range(len(C)) if i not in (mcs + excluded + B)]
             if not s.solve(assumptions):
-                combinedMSSes.append(mcs + art) #art is not part of the MSSes, hence, we need to add it to the MCSes
+                combinedMSSes.append(mcs + B) #B is not part of the MSSes, hence, we need to add it to the MCSes
 
         return combinedMSSes
 
@@ -149,131 +181,115 @@ class Counter:
         sortedOptions = sorted(options, key = lambda components: min(20000,(10000 * len(components[1]))) + median([len(i[0]) for i in components[1]]), reverse = True)
         return sortedOptions[0]
 
-    def reduceCut(self, C, Cs, Cclauses, Bclauses):
-        B = []
-        for bid in Bclauses:
-            connected = []
-            for i in range(len(Cs)):
-                isConnected = False
-                for cid in Cs[i]:
-                    for l in C[cid]:
-                        if -l in C[bid]:
-                            isConnected = True
-                            break
-                    if isConnected: break
-                if isConnected: connected.append(i)
-            B.append(connected[:]) #ids components, not ids of clauses
-            assert len(B[-1]) > 0
 
-        #TODO: find at least two b1 b2 such that B[b1][0] cap B[b2][0] == {} and then form C1 and C2 as:
-        #C1 = B[b1][0] + [b1], C2 = B[b2][0] + [b2]
-        C1, C2 = None, None
-        for i in range(len(B)):
-            for j in range(i+1, len(B)):
-                if set(B[i]).isdisjoint(B[j]):
-                    C1, C2 = i, j
-                    print("\n\n\n----extension!\n\n\n")
-                    break
-            if C1 != None: break
-        if C1 == None: return None, None, None
-        Bassignment = [-1 for _ in B]
-        Bassignment[C1], Bassignment[C2] = 1, 2
-        C1groups, C2groups = B[C1], B[C2]
-        assert min(len(C1groups), len(C2groups)) > 0
-
-        for i in range(len(B)):
-            if i in [C1, C2]: continue
-            if set(B[i]).isdisjoint(C1groups) and not set(B[i]).isdisjoint(C2groups):
-                Bassignment[i] = 2
-                C2groups += B[i]
-            if set(B[i]).isdisjoint(C2groups) and not set(B[i]).isdisjoint(C1groups):
-                Bassignment[i] = 1
-                C1groups += B[i]
-        return C1groups, C2groups, [B[i] for i in range(len(B)) if Bassignment == -1]
-
-    def decomposeViaCut(self, C, hard, atLeastOne, excluded):
-        decomposition = None         
-        for mcs in self.getMCSes(C, hard, excluded, atLeastOne, limit = 500):
-            mssC = [C[i] for i in range(len(C)) if i not in mcs]
-            decomposer = Decomposer(mssC, [])
-            components = decomposer.sccs()
-            print("---Cs:", len(components), "B:", len(C) - len(mssC), len(hard))
-            if len(components) > 1:
-                decomposition = components
-                Cs = [component[0] for component in decomposition]
-                Cclauses = [cid for component in Cs for cid in component]
-                Bclauses = [cid for cid in range(len(C)) if (cid not in Cclauses and cid not in excluded and cid not in hard)]
-                C1groups, C2groups, B = self.reduceCut(C, Cs, Cclauses, Bclauses)
-                print("after reduce cut")
-                #break
-        if not decomposition: return None, None #failed to decompose
-
-    def decomposeViaMSSes(self, C, hard, excluded):
+    def decomposeViaMSSes(self, C, atLeastOne, excluded):
         mapa = []
+        mapaRe = {}
         for i in range(len(C)):
             if i not in excluded:
+                mapaRe[i] = len(mapa)
                 mapa.append(i)
-        decomposer = MSSDecomposer(C = [C[i] for i in range(len(C)) if i not in excluded])
-        decompositions = decomposer.run()
-        if len(decompositions) == 0: return None, None
-        decomposition = decompositions[0] #for now, we just pick one of the identified decompositions
-        decomposition[0] = [mapa[cid] for cid in decomposition[0]]
-        decomposition[1] = [mapa[cid] for cid in decomposition[1]]
 
-        components = [[decomposition[0], []], [decomposition[1], []]]
-        cut = [i for i in range(len(C)) if i not in (decomposition[0] + decomposition[1] + excluded)] #the "cut" clauses
-        if len(cut) == 0: return None, None
-        print(len(cut))
-        self.verifyDecomposition(C, [decomposition[0], decomposition[1]])
-        print("verified")
-        return components, cut
+        atLeast = []
+        for a in atLeastOne:
+            a = [i for i in a if i not in excluded]
+            atLeast.append([mapaRe[i] for i in a])
+        decomposer = MSSDecomposer(C = [C[i] for i in range(len(C)) if i not in excluded], mapa = atLeast)
+        decomposer.maxsat = True
+        C1, C2, B = decomposer.run()
+        if C1 == None:
+            return C1, C2, B
+        print("\n\n ", len(C1), len(C2), "\n\n")
+        return [mapa[c] for c in C1], [mapa[c] for c in C2], [mapa[c] for c in B]
 
-    def decomposeViaArticulationPoint(self, C, hard, excluded):
+    def decomposeViaArticulationPoint(self, C, atLeastOne, excluded):
+        print("decomposing via art points")
         decomposer = Decomposer(C, [])
-        arts = [art for art in decomposer.articulationPointsIter() if art not in hard]
-        if len(arts) == 0: return None, None #failed to decompose
+        atLeastOneFlat = []
+        for c in atLeastOne:
+            atLeastOneFlat += c
+        arts = [art for art in decomposer.articulationPointsIter() if art not in atLeastOneFlat]
+        print(arts)
+        if len(arts) == 0: return None, None, None #failed to decompose
         art, components = self.pickArt(arts, C, excluded)
-        if len(components) == 1: return None, None #failed to decompose
-        return components, [[art]]
+        if len(components) == 1: return None, None, None #failed to decompose
+        C1 = components[0][0]
+        C2 = []
+        for i in range(1, len(components)):
+            C2 += components[i][0]
 
-    def decompose(self, C, hard, atLeastOne, excluded):
+        return C1, C2, [[art]]
+
+    def decompose(self, C, atLeastOne, excluded):
         if self.decompositionTechnique == "mss":
-            return self.decomposeViaMSSes(C, hard, excluded)
+            return self.decomposeViaMSSes(C, atLeastOne, excluded)
         #if self.decompositionTechnique = "cut":
         #    return self.decomposeViaCut(C, hard, atLeastOne, excluded)
-        return self.decomposeViaArticulationPoint(C, hard + atLeastOne, excluded)
+        return self.decomposeViaArticulationPoint(C, atLeastOne, excluded)
 
-    def processComponent(self, C, hard, atLeastOne, excluded, ttl = 1, mainInstance = True):
-        if ttl == 0:
-            mcses = self.getMCSes(C, hard, excluded, atLeastOne)
+
+    def processComponent(self, C, atLeastOne, excluded, ttl = 1, mainInstance = True):
+        #autarky trim
+        aut = getAutarky2(C, excluded)
+        excluded = [i for i in range(len(C)) if i not in aut]
+
+        for a in atLeastOne:
+            if len([i for i in a if i not in excluded]) == 0:
+                return []
+        print("ttl", ttl)
+        if ttl == 0 or len(C) - len(excluded) < 10:
+            mcses = self.getMCSes(C, [], excluded, atLeastOne)
             if mainInstance: printMCSes(mcses)
             return mcses
 
-        components, cut = self.decompose(C, hard, excluded, atLeastOne)
-        if not components:
-            mcses = self.getMCSes(C, hard, excluded, atLeastOne)
+        C1, C2, B = self.decompose(C, atLeastOne, excluded)
+        if C1 == None:
+            print("C1 is None")
+            mcses = self.getMCSes(C, [], excluded, atLeastOne)
             if mainInstance: printMCSes(mcses)
             return mcses
+
+        if self.debug:
+            U = [i for i in range(len(C)) if (i in (C1 + C2 + B) and i not in excluded)]
+            U2 = [i for i in range(len(C)) if i not in excluded]
+            assert set(U) == set(U2)
 
         #Get MSSes when art is presented
-        artMSSes = self.processComponent(C, hard, atLeastOne + [cut], excluded, min(ttl - 1, 1))
+        artMSSes = self.processComponent(C, atLeastOne + [B], excluded, min(ttl - 1, 0))
+        print("artMSSes:", len(artMSSes))
 
         #Get MSSes in the individual components
         componentsMCSes = []
-        Cid = 0
-        for component in components:
-            Cid += 1
-            soft,_ = component
-            excludedRec = [i for i in range(len(C)) if i not in soft]
+        excludedC1 = [i for i in range(len(C)) if i not in C1]
+        if not checkSAT(C, excludedC1):
+            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC1, ttl = min(0, ttl - 1), mainInstance = False))
+            print("C1 MSSes:", len(componentsMCSes[-1]))
+        excludedC2 = [i for i in range(len(C)) if i not in C2]
+        if not checkSAT(C, excludedC2):
+            componentsMCSes.append(self.processComponent(C, atLeastOne, excludedC2, ttl = min(0, ttl - 1), mainInstance = False))
+            print("C2 MSSes:", len(componentsMCSes[-1]))
 
-            #only unsatisfiable components participate on the MCSes
-            if not checkSAT(C, excludedRec):
-                componentsMCSes.append(self.processComponent(C, hard, atLeastOne, excludedRec, ttl = min(0, ttl - 1), mainInstance = False))
-        combinedMSSes = self.validCombinations(C, excluded, artMSSes, cut, componentsMCSes, components)
-        print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
-        combinedMSSes = self.validCombinations2(C, excluded, artMSSes, cut, componentsMCSes, components)
+
+        #combinedMSSes = self.validCombinations2(C, excluded, artMSSes, B, componentsMCSes)
+        #print("artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
+        combinedMSSes = self.validCombinations(C, excluded, artMSSes, B, componentsMCSes)
         print("-- artMSSes: {}, combinedMSS: {}, total: {}".format(len(artMSSes), len(combinedMSSes), len(artMSSes + combinedMSSes)))
         if mainInstance: printMCSes(combinedMSSes)
+
+        if self.debug:
+            print("checking {} MCSes".format(len(combinedMSSes)))
+            mapaRe = {}
+            D = []
+            for i in range(len(C)):
+                if i not in excluded:
+                    mapaRe[i] = len(D)
+                    D.append(C[i])
+            for mcs in combinedMSSes:
+                assert isMCS(D, [mapaRe[i] for i in mcs])        
+
+        if len(combinedMSSes) > 0:
+            print("\n\n\n \t\t combined: {}\n\n\n".format(len(combinedMSSes)))
+
 
         return artMSSes + combinedMSSes
 
@@ -297,8 +313,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("MSS counter")
     parser.add_argument("input_file", help = "A path to the input file. Either a .cnf or a .gcnf instance. See ./examples/")
     parser.add_argument("--MCSEnumerator", help = "MCSEnumeration subroutine. Available options: [mcsls,rime]", default = "mcsls")
-    parser.add_argument("--decomposer", help = "Decomposition technique. Available options: [ap,mss]", default = "ap")
+    parser.add_argument("--decomposer", help = "Decomposition technique. Available options: [ap,mss]", default = "mss")
     parser.add_argument("--ttl", help = "Maximum recursion depth", type = int, default = 200)
+    parser.add_argument("--verbosity", help = "Verbosity level. Set it to 2 to print indices of MCSes.", type = int, default = 1)
+    parser.add_argument("--debug", action = 'store_true')
     args = parser.parse_args()
 
     if args.input_file == "tests":
@@ -308,4 +326,6 @@ if __name__ == "__main__":
         counter.MCSEnumerator = args.MCSEnumerator
         counter.decompositionTechnique = args.decomposer
         counter.ttl = args.ttl
+        counter.debug = args.debug
+        counter.verbosity = args.verbosity
         counter.run()
