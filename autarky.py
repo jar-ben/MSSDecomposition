@@ -67,7 +67,7 @@ def maxSat(Hard, Soft):
     with open(file+".cnf", "w") as f:
         f.write(renderCnf(Hard+Soft))
 
-    cmd = 'timeout {} ./uwrmaxsat -m {}'.format(satTimeout, file)
+    cmd = 'timeout {} ./tools/uwrmaxsat -m {}'.format(satTimeout, file)
     proc = sp.Popen([cmd], stdout=sp.PIPE, shell=True)
     (out, err) = proc.communicate()
     out = out.decode("utf-8")         

@@ -10,7 +10,6 @@ import os
 from functools import partial
 import signal
 from decomposeIter import Decomposer
-from contractor import Contractor
 from MSSdecompose import MSSDecomposer
 from pysat.card import *
 import glob
@@ -172,16 +171,6 @@ class Counter:
 
         return combinedMSSes
 
-    def pickArt(self, arts, C, excluded):
-        options = []
-        for art in arts:
-            options.append((art, Decomposer(C, []).sccs(excluded + [art])))
-        #sort primary by the number of components (given by the art) and secondary by the median size of the components
-        #primarily at least two components, and secondary sorty by the median siez of the components
-        sortedOptions = sorted(options, key = lambda components: min(20000,(10000 * len(components[1]))) + median([len(i[0]) for i in components[1]]), reverse = True)
-        return sortedOptions[0]
-
-
     def decomposeViaMSSes(self, C, atLeastOne, excluded):
         mapa = []
         mapaRe = {}
@@ -202,31 +191,8 @@ class Counter:
         print("\n\n ", len(C1), len(C2), "\n\n")
         return [mapa[c] for c in C1], [mapa[c] for c in C2], [mapa[c] for c in B]
 
-    def decomposeViaArticulationPoint(self, C, atLeastOne, excluded):
-        print("decomposing via art points")
-        decomposer = Decomposer(C, [])
-        atLeastOneFlat = []
-        for c in atLeastOne:
-            atLeastOneFlat += c
-        arts = [art for art in decomposer.articulationPointsIter() if art not in atLeastOneFlat]
-        print(arts)
-        if len(arts) == 0: return None, None, None #failed to decompose
-        art, components = self.pickArt(arts, C, excluded)
-        if len(components) == 1: return None, None, None #failed to decompose
-        C1 = components[0][0]
-        C2 = []
-        for i in range(1, len(components)):
-            C2 += components[i][0]
-
-        return C1, C2, [[art]]
-
     def decompose(self, C, atLeastOne, excluded):
-        if self.decompositionTechnique == "mss":
-            return self.decomposeViaMSSes(C, atLeastOne, excluded)
-        #if self.decompositionTechnique = "cut":
-        #    return self.decomposeViaCut(C, hard, atLeastOne, excluded)
-        return self.decomposeViaArticulationPoint(C, atLeastOne, excluded)
-
+        return self.decomposeViaMSSes(C, atLeastOne, excluded)
 
     def processComponent(self, C, atLeastOne, excluded, ttl = 1, mainInstance = True):
         #autarky trim
@@ -303,7 +269,6 @@ def tests(args):
     for test in files:
         counter = Counter(test)
         counter.MCSEnumerator = args.MCSEnumerator
-        counter.decompositionTechnique = args.decomposer
         counter.ttl = args.ttl
         startTime = time.time()
         assert files[test] == counter.run()
@@ -313,7 +278,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("MSS counter")
     parser.add_argument("input_file", help = "A path to the input file. Either a .cnf or a .gcnf instance. See ./examples/")
     parser.add_argument("--MCSEnumerator", help = "MCSEnumeration subroutine. Available options: [mcsls,rime]", default = "mcsls")
-    parser.add_argument("--decomposer", help = "Decomposition technique. Available options: [ap,mss]", default = "mss")
     parser.add_argument("--ttl", help = "Maximum recursion depth", type = int, default = 200)
     parser.add_argument("--verbosity", help = "Verbosity level. Set it to 2 to print indices of MCSes.", type = int, default = 1)
     parser.add_argument("--debug", action = 'store_true')
@@ -323,8 +287,8 @@ if __name__ == "__main__":
         tests(args)
     else:
         counter = Counter(args.input_file)
-        counter.MCSEnumerator = args.MCSEnumerator
-        counter.decompositionTechnique = args.decomposer
+        #counter.MCSEnumerator = args.MCSEnumerator
+        counter.MCSEnumerator = "mcsls"
         counter.ttl = args.ttl
         counter.debug = args.debug
         counter.verbosity = args.verbosity

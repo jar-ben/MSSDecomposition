@@ -10,7 +10,6 @@ import os
 from functools import partial
 import signal
 from decomposeIter import Decomposer
-from contractor import Contractor
 from pysat.card import *
 import glob
 import itertools
@@ -169,7 +168,7 @@ def rime(C, hard = [], excluded = [], limit = 0, auxiliaryHard = []):
 
     filename = "./tmp/rime{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
-    cmd = "./rime -v 1 {}".format(filename)
+    cmd = "./tools/rime -v 1 {}".format(filename)
     out = run(cmd, 3600)
     os.remove(filename)
     assert "Number of MSSes" in out
@@ -236,7 +235,7 @@ def mcsls(C, hard, excluded, limit = 0, auxiliaryHard = []):
 
     filename = "./tmp/mcsls{}.wcnf".format(randint(1,10000000))
     open(filename, "w").write(renderWcnf(H,S))
-    cmd = "timeout {} ./mcsls -num {} {}".format(3600, limit, filename)
+    cmd = "timeout {} ./tools/mcsls -num {} {}".format(3600, limit, filename)
     print(cmd)
     out = run(cmd, 3600)
     os.remove(filename)

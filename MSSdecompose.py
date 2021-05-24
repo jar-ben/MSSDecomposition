@@ -251,7 +251,7 @@ class MSSDecomposer:
         assert len(self.B) == 0
         filename = "./tmp/disjoint_" + str(randint(1,10000000)) + ".cnf"
         exportCNF(self.C, filename)
-        cmd = "timeout 300 ./unimus_disjoint -a marco {}".format(filename)
+        cmd = "timeout 300 ./tools/unimus_disjoint -a marco {}".format(filename)
         #print(cmd)
         out = run(cmd, 60)
         os.remove(filename)
