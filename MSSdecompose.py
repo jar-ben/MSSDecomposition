@@ -191,7 +191,31 @@ class MSSDecomposer:
         self.vars["Mvars"] = [v + self.mvarsOffset for v in variables(self.C)]       
         
         self.minAct = self.vars["Mvars"][-1] + 1
- 
+
+    def isCoveredCut(self, C1, C2, B, k):
+        self.knownCover = [0 for i in range(self.dimension)]
+        for c in B:
+            if not self.isCovered(c, k, C1, C2):
+                return False
+        return True
+
+    def isCovered(self, c, k, C1, C2):
+        if self.knownCover[c] >= k: return True
+        if self.knownCover[c] < 0: return False
+        for l in self.C[c]:
+            covered = False
+            for d in self.hitmapC[-l]:
+                if (d in C1 + C2) and self.isCovered(d, k - 1, C1, C2):
+                    covered = True
+                    break
+            if not covered:
+                self.knownCover[c] = -1
+                return False
+        self.knownCover[c] = k
+        return True
+
+
+
     def validateDecomposition(self, N, N1, N2, C1, C2, B):
         minimal = self.isMinimal(C1, C2, B)
         disconnected = self.isDisconnected(C1, C2)
@@ -483,7 +507,7 @@ class MSSDecomposer:
     def run_qbf(self):
         pass
 
-    def run_maxsat(self):
+    def run_maxsatOld(self):
         SSClauses = self.SS()        
         wcnf = WCNF()
         for cl in SSClauses:
@@ -507,6 +531,35 @@ class MSSDecomposer:
             N = [i for i in range(len(self.C)) if model[self.acts["N"][i]-1] > 0]
             B = [i for i in range(len(self.C)) if i not in (C1+C2)]
             return N, N1, N2, C1, C2, B
+
+    def run_maxsat(self):
+        SSClauses = self.SS()        
+        wcnf = WCNF()
+        for cl in SSClauses:
+            wcnf.append(cl)
+        indices = [i for i in range(len(self.C))]
+        random.shuffle(indices)
+        for i in indices:
+            wcnf.append([self.acts["C1"][i]], weight = (i % 2) + 1)
+            wcnf.append([self.acts["C2"][i]], weight = ((i + 1) % 2) + 1)
+            wcnf.append([self.acts["C1"][i], self.acts["C2"][i]], weight = randint(1,2))
+
+        with RC2(wcnf) as rc2:
+            iteration = 0
+            for model in rc2.enumerate():
+                iteration += 1
+                print("RC2 iteration:", iteration)
+                if model == None or iteration == 10:
+                    return None, None, None, None, None, None
+
+                C1 = [i for i in range(len(self.C)) if model[self.acts["C1"][i]-1] > 0]
+                C2 = [i for i in range(len(self.C)) if model[self.acts["C2"][i]-1] > 0]
+                N1 = [i for i in range(len(self.C)) if model[self.acts["N1"][i]-1] > 0]
+                N2 = [i for i in range(len(self.C)) if model[self.acts["N2"][i]-1] > 0]
+                N = [i for i in range(len(self.C)) if model[self.acts["N"][i]-1] > 0]
+                B = [i for i in range(len(self.C)) if i not in (C1+C2)]
+                if self.isCoveredCut(C1, C2, B, min(5, self.dimension)):
+                    return N, N1, N2, C1, C2, B
 
 
     def run_basic(self):
